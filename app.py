@@ -2,127 +2,128 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
 
-# הגדרות דף ועיצוב צבעוני
-st.set_page_config(page_title="Global Market Terminal", layout="wide")
+# הגדרות דף
+st.set_page_config(page_title="Global Market Pro", layout="wide")
 
-# עיצוב CSS כדי להפוך את האתר למרשים
+# עיצוב כהה ויוקרתי
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; color: white; }
-    .stMetric { background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; }
-    div[data-testid="stExpander"] { border: none !important; box-shadow: none !important; }
+    .main { background-color: #0e1117; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #161b22; border-radius: 5px; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# כותרת האתר
-st.markdown("<h1 style='text-align: center; color: #00D1FF;'>🌐 טרמינל מסחר גלובלי - Pro Insight</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center;'>ניתוח מגמות, קריפטו, סחורות ומדדים בזמן אמת</p>", unsafe_allow_html=True)
+# פונקציית שער דולר חסינה
+@st.cache_data(ttl=3600)
+def get_usd_rate():
+    try:
+        d = yf.download("ILS=X", period="1d", interval="1m")
+        return float(d['Close'].iloc[-1])
+    except:
+        return 3.70
 
-# --- פונקציות עזר ---
+usd_rate = get_usd_rate()
+
+# פונקציה למשיכת כל מניה וחישוב כל האינדיקטורים
 @st.cache_data(ttl=300)
-def load_data(symbol, period="1y"):
-    df = yf.download(symbol, period=period)
-    if df.empty: return None
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    # חישוב אינדיקטורים
-    df['SMA50'] = df['Close'].rolling(window=50).mean()
-    df['SMA200'] = df['Close'].rolling(window=200).mean()
-    return df
-
-# --- סרגל צד ---
-st.sidebar.header("🚀 מרכז שליטה")
-ticker = st.sidebar.text_input("חיפוש מניה/מדד:", "NVDA").upper()
-show_ma = st.sidebar.checkbox("הצג ממוצעים נעים", value=True)
-
-# --- אזור המגמות הכלליות (Top Bar) ---
-st.markdown("### 🌍 מגמות עולמיות (Market Snapshot)")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-
-# רשימת נכסים למעקב כללי
-global_assets = {
-    "S&P 500": "SPY",
-    "ביטקוין (BTC)": "BTC-USD",
-    "זהב (Gold)": "GC=F",
-    "נפט (Oil)": "CL=F"
-}
-
-cols = [m_col1, m_col2, m_col3, m_col4]
-for (name, sym), col in zip(global_assets.items(), cols):
-    g_data = yf.download(sym, period="2d")
-    if not g_data.empty:
-        if isinstance(g_data.columns, pd.MultiIndex): g_data.columns = g_data.columns.get_level_values(0)
-        price = g_data['Close'].iloc[-1]
-        change = price - g_data['Close'].iloc[0]
-        col.metric(name, f"${price:,.2f}", f"{change:,.2f}")
-
-st.divider()
-
-# --- אזור הגרף הראשי ---
-tab_main, tab_crypto, tab_journal = st.tabs(["📈 גרף נרות וניתוח", "🪙 עולם הקריפטו וסחורות", "📋 יומן וביצועים"])
-
-with tab_main:
-    data = load_data(ticker)
-    if data is not None:
-        col_info, col_chart = st.columns([1, 4])
+def get_all_data(symbol):
+    try:
+        df = yf.download(symbol, period="2y")
+        if df.empty: return None
+        # שיטוח כותרות למניעת KeyError
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         
-        with col_info:
-            st.markdown(f"**נתוני {ticker}**")
-            curr_p = data['Close'].iloc[-1]
-            st.write(f"מחיר סגירה: **${curr_p:.2f}**")
-            st.write(f"גבוה שנתי: ${data['High'].max():.2f}")
-            st.write(f"נמוך שנתי: ${data['Low'].min():.2f}")
-            
-            # ציון מגמה (לוגיקה של Micha Stocks)
-            if curr_p > data['SMA50'].iloc[-1] > data['SMA200'].iloc[-1]:
-                st.success("מגמה: קנייה חזקה 🔥")
-            elif curr_p < data['SMA50'].iloc[-1]:
-                st.error("מגמה: הימנעות ❌")
-            else:
-                st.warning("מגמה: דשדוש 🟡")
+        # חישוב כל הממוצעים שביקשת
+        for m in [9, 20, 50, 100, 150, 200]:
+            df[f'SMA{m}'] = df['Close'].rolling(window=m).mean()
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df['RSI'] = 100 - (100 / (1 + (gain/loss)))
+        
+        # MACD
+        df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+        df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = df['EMA12'] - df['EMA26']
+        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        return df
+    except:
+        return None
 
-        with col_chart:
-            # גרף נרות יפניים מקצועי
-            fig = go.Figure(data=[go.Candlestick(
-                x=data.index,
-                open=data['Open'], high=data['High'],
-                low=data['Low'], close=data['Close'],
-                increasing_line_color='#00ff00', decreasing_line_color='#ff0000',
-                name="נרות יפניים"
-            )])
-            
-            if show_ma:
-                fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], name="SMA 50", line=dict(color='orange', width=1.5)))
-                fig.add_trace(go.Scatter(x=data.index, y=data['SMA200'], name="SMA 200", line=dict(color='blue', width=1.5)))
-            
-            fig.update_layout(height=500, template="plotly_dark", margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig, use_container_width=True)
-            
+# סרגל צד - בחירת מניה
+st.sidebar.title("🔍 חיפוש שוק")
+# כאן אתה יכול להזין כל מניה (למשל: TSLA, AMZN, MSFT, או 2812.HK)
+ticker = st.sidebar.text_input("הכנס סימול מניה (כל מניה מהשוק):", "AAPL").upper()
 
-with tab_crypto:
-    st.subheader("📊 השוואת סחורות ומטבעות דיגיטליים")
-    # גרף השוואתי
-    crypto_list = ["BTC-USD", "ETH-USD", "GC=F", "CL=F"]
-    c_data = yf.download(crypto_list, period="1mo")['Close']
-    if isinstance(c_data.columns, pd.MultiIndex): c_data.columns = c_data.columns.get_level_values(0)
+data = get_all_data(ticker)
+
+if data is not None:
+    st.title(f"📊 ניתוח מקצועי: {ticker}")
     
-    # נרמול הגרף כדי לראות אחוזי שינוי
-    c_data_norm = c_data / c_data.iloc[0] * 100
-    st.line_chart(c_data_norm)
-    st.caption("גרף באחוזים (השוואתי - בסיס 100)")
-
-with tab_journal:
-    st.subheader("💰 ניהול תיק אישי")
-    c1, c2, c3 = st.columns(3)
-    buy_price = c1.number_input("מחיר קנייה ($)", value=0.0)
-    amount = c2.number_input("כמות מניות", value=1)
-    usd_rate = yf.download("ILS=X", period="1d")['Close'].iloc[-1]
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 גרף נרות", "🛠️ אינדיקטורים", "💰 יומן וביצועים", "🌐 מגמות עולם"])
     
-    if buy_price > 0:
-        profit_usd = (data['Close'].iloc[-1] - buy_price) * amount
-        st.metric("רווח/הפסד מצטבר", f"${profit_usd:.2f}", f"₪{profit_usd * usd_rate:.2f}")
+    with tab1:
+        # בחירת ממוצעים להצגה על הגרף
+        selected_ma = st.multiselect("בחר ממוצעים להצגה:", [9, 20, 50, 100, 150, 200], default=[50, 200])
+        
+        fig = go.Figure(data=[go.Candlestick(
+            x=data.index, open=data['Open'], high=data['High'],
+            low=data['Low'], close=data['Close'], name="מחיר"
+        )])
+        
+        for m in selected_ma:
+            fig.add_trace(go.Scatter(x=data.index, y=data[f'SMA{m}'], name=f"SMA {m}"))
+        
+        fig.update_layout(height=600, template="plotly_dark", xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
 
-st.divider()
-st.caption("הנתונים נמשכים מ-Yahoo Finance. השימוש על אחריות המשתמש בלבד.")
+    with tab2:
+        col_rsi, col_macd = st.columns(2)
+        with col_rsi:
+            st.subheader("RSI (מדד עוצמה)")
+            st.line_chart(data['RSI'].tail(150))
+            
+        with col_macd:
+            st.subheader("MACD (מומנטום)")
+            st.line_chart(data[['MACD', 'Signal']].tail(150))
+            
+
+    with tab3:
+        st.subheader("תיעוד וחישוב רווחים")
+        c1, c2 = st.columns(2)
+        buy_p = c1.number_input("מחיר קנייה ($)", min_value=0.0, step=0.01)
+        qty = c2.number_input("כמות מניות", min_value=1, step=1)
+        
+        if buy_p > 0:
+            current_p = float(data['Close'].iloc[-1])
+            profit_usd = (current_p - buy_p) * qty
+            profit_ils = profit_usd * usd_rate
+            
+            st.metric("רווח/הפסד בדולר", f"${profit_usd:,.2f}")
+            st.metric("רווח/הפסד בשקל", f"₪{profit_ils:,.2f}")
+            st.caption(f"שער דולר מחושב: {usd_rate:.3f}")
+
+    with tab4:
+        st.subheader("מגמות עולמיות - השוואה")
+        # קריפטו, זהב, נפט
+        indices = {"ביטקוין": "BTC-USD", "זהב": "GC=F", "נפט": "CL=F", "S&P 500": "SPY"}
+        idx_choice = st.multiselect("בחר נכסים להשוואה:", list(indices.keys()), default=["S&P 500", "ביטקוין"])
+        
+        if idx_choice:
+            compare_df = pd.DataFrame()
+            for name in idx_choice:
+                temp_data = yf.download(indices[name], period="1mo")['Close']
+                if isinstance(temp_data, pd.DataFrame): temp_data = temp_data.iloc[:, 0]
+                compare_df[name] = temp_data / temp_data.iloc[0] # נרמול ל-100%
+            
+            st.line_chart(compare_df * 100)
+            st.info("הגרף מציג שינוי באחוזים מתחילת החודש")
+
+else:
+    st.error(f"לא הצלחנו למצוא נתונים עבור '{ticker}'. וודא שהסימול נכון (למשל AAPL למניית אפל).")
