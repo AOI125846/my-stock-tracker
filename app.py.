@@ -55,4 +55,5 @@ with col2:
 st.divider()
 st.subheader("מגמת שוק כללית (S&P 500 & Nasdaq)")
 indices = yf.download(["SPY", "QQQ"], period="5d")['Close']
+
 st.line_chart(indices)
