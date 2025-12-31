@@ -156,4 +156,113 @@ for i, (name, sym) in enumerate(indices.items(), 1):
 st.divider()
 
 # אזור עבודה ראשי
-col_search
+col_search, col_actions = st.columns([1, 3])
+with col_search:
+    ticker = st.text_input("הזן סימול לניתוח:", "NVDA").upper()
+    
+# ביצוע ניתוח
+df, score, err = analyze_stock(ticker)
+
+if df is not None:
+    # לשוניות
+    tab_chart, tab_journal, tab_info = st.tabs(["📈 גרף מסחר מקצועי", "📓 יומן טריידים", "ℹ️ מידע ודירוג"])
+
+    # --- לשונית 1: גרף ---
+    with tab_chart:
+        # תצוגת ציון
+        st.markdown(f"### דירוג טכני: **{score}/100**")
+        st.progress(score)
+        
+        # יצירת גרף משולב (Subplots)
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                            vertical_spacing=0.05, row_heights=[0.7, 0.3],
+                            subplot_titles=("מחיר וממוצעים", "MACD & RSI"))
+
+        # גרף נרות (Candlestick)
+        fig.add_trace(go.Candlestick(x=df.index,
+                                     open=df['Open'], high=df['High'],
+                                     low=df['Low'], close=df['Close'],
+                                     name="Candles"), row=1, col=1)
+
+        # הוספת ממוצעים (רק אם המשתמש רוצה)
+        show_smas = st.multiselect("שכבות ממוצעים:", [50, 200], default=[50, 200])
+        colors = {50: 'orange', 200: 'blue'}
+        for ma in show_smas:
+            fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA{ma}'], 
+                                     line=dict(color=colors.get(ma, 'white'), width=1.5), 
+                                     name=f"SMA {ma}"), row=1, col=1)
+
+        # אינדיקטורים (MACD) בחלק התחתון
+        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='#00d4ff', width=1), name="MACD"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], line=dict(color='#ff5252', width=1), name="Signal"), row=2, col=1)
+        
+        # הגדרות עיצוב גרף (Dark Mode & Zoom)
+        fig.update_layout(
+            height=700,
+            template="plotly_dark",
+            showlegend=True,
+            xaxis_rangeslider_visible=False, # ביטלנו את הסליידר התחתון כי יש זום מובנה
+            margin=dict(l=10, r=10, t=30, b=10),
+            dragmode='pan' # ברירת מחדל לגרירה
+        )
+        
+        # הפעלת זום בציר Y
+        fig.update_yaxes(fixedrange=False) 
+        
+        st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+        st.caption("טיפ: השתמש בגלגלת העכבר לזום, וגרור את הגרף לניווט בזמן.")
+
+    # --- לשונית 2: יומן מסחר ---
+    with tab_journal:
+        st.subheader("ניהול פוזיציות")
+        
+        # טופס הזנה
+        with st.form("trade_form", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns(4)
+            buy_price = c1.number_input("מחיר כניסה ($)", min_value=0.0, step=0.1)
+            sell_price = c2.number_input("מחיר יציאה ($)", min_value=0.0, step=0.1)
+            quantity = c3.number_input("כמות מניות", min_value=1, step=1)
+            trade_date = c4.date_input("תאריך ביצוע")
+            
+            submitted = st.form_submit_button("💾 שמור ביומן")
+            
+            if submitted:
+                if buy_price > 0 and quantity > 0:
+                    new_df = save_trade(trade_date, ticker, buy_price, sell_price, quantity, usd_val)
+                    st.success("הטרייד נשמר בהצלחה!")
+                else:
+                    st.error("נא להזין מחיר וכמות תקינים")
+
+        st.divider()
+        
+        # תצוגת הטבלה
+        journal_df = load_journal()
+        if not journal_df.empty:
+            st.markdown("### היסטוריית עסקאות")
+            st.dataframe(journal_df, use_container_width=True)
+            
+            # סיכום כללי
+            total_profit_ils = journal_df['רווח (₪)'].sum()
+            color = "green" if total_profit_ils >= 0 else "red"
+            st.markdown(f"### סה\"כ רווח/הפסד מצטבר: <span style='color:{color}'>₪{total_profit_ils:,.2f}</span>", unsafe_allow_html=True)
+        else:
+            st.info("עדיין לא תועדו עסקאות.")
+
+    # --- לשונית 3: מידע ---
+    with tab_info:
+        last_close = df['Close'].iloc[-1]
+        st.write(f"**מחיר סגירה אחרון:** ${last_close:.2f}")
+        st.write(f"**טווח 52 שבועות:** ${df['Low'].min():.2f} - ${df['High'].max():.2f}")
+        
+        # פרשנות ציון
+        if score > 80:
+            st.success("דירוג: חזק מאוד (Strong Buy) - המניה נמצאת במומנטום חיובי ברור מעל הממוצעים.")
+        elif score > 60:
+            st.info("דירוג: חיובי (Buy) - המניה במגמת עלייה אך נדרשת זהירות.")
+        elif score < 40:
+            st.error("דירוג: שלילי (Sell/Avoid) - המניה מתחת לממוצעים החשובים.")
+        else:
+            st.warning("דירוג: ניטרלי (Hold) - השוק בהמתנה לכיוון ברור.")
+
+else:
+    st.warning("אנא הזן סימול מניה חוקי בתיבת החיפוש.")
