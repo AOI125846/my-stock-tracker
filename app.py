@@ -1,59 +1,74 @@
 import streamlit as st
 import yfinance as yf
-import plotly.graph_objects as go
 import pandas as pd
-import os
+import plotly.graph_objects as go
 
 # הגדרות דף
-st.set_page_config(page_title="Market Trend Tracker", layout="wide")
-st.title("מערכת מעקב מגמות וביצועים")
+st.set_page_config(page_title="Trend Tracker - Micha Stocks Method", layout="wide")
+st.title("📊 מערכת מעקב מגמות וביצועים")
 
-# פונקציה לניהול קובץ הנתונים
-DB_FILE = "trading_journal.csv"
-if not os.path.exists(DB_FILE):
-    df_init = pd.DataFrame(columns=["תאריך", "סימול", "מחיר כניסה", "מחיר יציאה", "רווח/הפסד %"])
-    df_init.to_csv(DB_FILE, index=False)
+# סרגל צד לחיפוש
+st.sidebar.header("חיפוש וניתוח")
+ticker = st.sidebar.text_input("הכנס סימול מניה (למשל SPY, NVDA):", "SPY").upper()
 
-# סרגל צד - הזנת נתונים
-st.sidebar.header("הוספת טרייד ליומן")
-with st.sidebar.form("trade_form"):
-    ticker_input = st.text_input("סימול מניה:", "AAPL")
-    buy_p = st.number_input("מחיר כניסה:", step=0.01)
-    sell_p = st.number_input("מחיר יציאה:", step=0.01)
-    submitted = st.form_submit_button("שמור טרייד")
+# פונקציה למשיכת נתונים וחישוב אינדיקטורים
+def get_stock_data(ticker):
+    data = yf.download(ticker, period="1y", interval="1d")
+    if not data.empty:
+        # חישוב ממוצעים נעים
+        data['SMA50'] = data['Close'].rolling(window=50).mean()
+        data['SMA200'] = data['Close'].rolling(window=200).mean()
+        return data
+    return None
 
-if submitted:
-    profit_pct = ((sell_p - buy_p) / buy_p) * 100 if buy_p > 0 else 0
-    new_data = pd.DataFrame([[pd.Timestamp.now().date(), ticker_input, buy_p, sell_p, f"{profit_pct:.2f}%"]], 
-                            columns=["תאריך", "סימול", "מחיר כניסה", "מחיר יציאה", "רווח/הפסד %"])
-    new_data.to_csv(DB_FILE, mode='a', header=False, index=False)
-    st.sidebar.success("הטרייד נשמר!")
+data = get_stock_data(ticker)
 
-# הצגת נתוני שוק ומגמות
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    st.subheader(f"ניתוח מגמה: {ticker_input}")
-    data = yf.download(ticker_input, period="1y")
+if data is not None:
+    # אזור המדדים העליון
+    col1, col2, col3, col4 = st.columns(4)
+    current_price = data['Close'].iloc[-1]
+    sma50 = data['SMA50'].iloc[-1]
+    sma200 = data['SMA200'].iloc[-1]
     
+    col1.metric("מחיר עכשיו", f"${current_price:.2f}")
+    col2.metric("SMA 50", f"${sma50:.2f}")
+    col3.metric("SMA 200", f"${sma200:.2f}")
+    
+    # קביעת מצב מגמה לפי הקובץ שלך
+    if current_price > sma50 and sma50 > sma200:
+        trend_status = "🔥 פריצה / קנייה חזקה"
+        color = "green"
+    elif current_price < sma50:
+        trend_status = "❌ להימנע / מגמה יורדת"
+        color = "red"
+    else:
+        trend_status = "🟡 מגמה לא ברורה"
+        color = "orange"
+        
+    col4.markdown(f"**סטטוס:** <span style='color:{color}'>{trend_status}</span>", unsafe_allow_html=True)
+
+    # גרף נרות יפניים אינטראקטיבי
+    st.subheader(f"גרף מגמה - {ticker}")
     fig = go.Figure(data=[go.Candlestick(x=data.index,
                     open=data['Open'], high=data['High'],
                     low=data['Low'], close=data['Close'], name="מחיר")])
     
-    # הוספת ממוצעים נעים לזיהוי מגמה
-    data['SMA50'] = data['Close'].rolling(window=50).mean()
-    fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], name="SMA 50", line=dict(color='orange')))
+    fig.add_trace(go.Scatter(x=data.index, y=data['SMA50'], name="SMA 50", line=dict(color='orange', width=1.5)))
+    fig.add_trace(go.Scatter(x=data.index, y=data['SMA200'], name="SMA 200", line=dict(color='blue', width=1.5)))
     
     st.plotly_chart(fig, use_container_width=True)
 
-with col2:
-    st.subheader("יומן ביצועים")
-    history_df = pd.read_csv(DB_FILE)
-    st.dataframe(history_df.tail(10), use_container_width=True)
+    # הצגת טבלת נתונים אחרונים
+    st.subheader("נתונים אחרונים")
+    st.dataframe(data.tail(10))
+else:
+    st.error("לא ניתן היה למשוך נתונים עבור הסימול שהוזן.")
 
-# מבט על השוק הכללי
+# מבט שוק כללי בתחתית
 st.divider()
-st.subheader("מגמת שוק כללית (S&P 500 & Nasdaq)")
-indices = yf.download(["SPY", "QQQ"], period="5d")['Close']
-
-st.line_chart(indices)
+st.subheader("מבט על השוק הכללי")
+m_col1, m_col2 = st.columns(2)
+m_col1.write("**S&P 500 (SPY)**")
+m_col1.line_chart(yf.download("SPY", period="1mo")['Close'])
+m_col2.write("**NASDAQ (QQQ)**")
+m_col2.line_chart(yf.download("QQQ", period="1mo")['Close'])
