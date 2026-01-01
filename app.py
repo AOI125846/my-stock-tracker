@@ -1,77 +1,48 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import numpy as np
-import io
 
-# =====================
-# Technical Indicators
-# =====================
+from core.data import load_stock_data
+from core.indicators import sma, rsi, macd
+from utils.export import to_excel
 
-def rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+st.set_page_config(page_title="Stock Tracker", layout="wide")
+st.title("📈 Stock Tracker – Professional Edition")
 
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+# ========= Sidebar =========
+st.sidebar.header("Settings")
 
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+ticker = st.sidebar.text_input("Ticker", "AAPL")
+start_date = st.sidebar.date_input("Start Date")
+end_date = st.sidebar.date_input("End Date")
 
+# ========= Main =========
+if st.sidebar.button("Load Data"):
+    df = load_stock_data(ticker, start_date, end_date)
 
-def macd(series, fast=12, slow=26, signal=9):
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    return macd_line, signal_line
+    if df.empty:
+        st.error("No data returned.")
+        st.stop()
 
+    # Indicators
+    df["SMA20"] = sma(df["Close"], 20)
+    df["SMA50"] = sma(df["Close"], 50)
+    df["RSI"] = rsi(df["Close"])
+    df["MACD"], df["MACD_SIGNAL"] = macd(df["Close"])
 
-# =====================
-# Main App
-# =====================
+    st.subheader("📊 Price & Indicators")
+    st.dataframe(df.tail(20), use_container_width=True)
 
-def main():
-    st.title("📈 Stock Tracker")
+    # Journal
+    journal = df.reset_index()[[
+        "Date", "Open", "High", "Low", "Close",
+        "Volume", "RSI", "MACD", "MACD_SIGNAL"
+    ]]
 
-    ticker = st.text_input("Ticker", "AAPL")
-    start = st.date_input("Start Date")
-    end = st.date_input("End Date")
+    excel_file = to_excel(journal)
 
-    if st.button("Load Data"):
-        df = yf.download(ticker, start=start, end=end)
-
-        if df.empty:
-            st.error("No data found")
-            return
-
-        df["SMA20"] = df["Close"].rolling(20).mean()
-        df["SMA50"] = df["Close"].rolling(50).mean()
-        df["RSI"] = rsi(df["Close"])
-        df["MACD"], df["MACD_SIGNAL"] = macd(df["Close"])
-
-        st.subheader("📊 Data Preview")
-        st.dataframe(df.tail())
-
-        # ===== Journal =====
-        journal = df.reset_index()[[
-            "Date", "Open", "High", "Low", "Close", "Volume",
-            "RSI", "MACD", "MACD_SIGNAL"
-        ]]
-
-        # ===== Excel Export =====
-        output = io.BytesIO()
-        journal.to_excel(output, index=False)
-        output.seek(0)
-
-        st.download_button(
-            "📥 Download Trading Journal (Excel)",
-            data=output,
-            file_name=f"{ticker}_journal.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-
-if __name__ == "__main__":
-    main()
+    st.download_button(
+        "📥 Download Trading Journal (Excel)",
+        data=excel_file,
+        file_name=f"{ticker}_journal.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
