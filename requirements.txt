@@ -1,4 +1,6 @@
-streamlit
-yfinance
-pandas
-plotly
+Flask>=2.2
+requests>=2.28
+python-dotenv>=1.0
+pytest>=7.0
+ruff
+black
