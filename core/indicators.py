@@ -4,7 +4,6 @@ def sma(series, period):
     return series.rolling(period).mean()
 
 def rsi(series, period=14):
-    """ RSI with Wilder's Smoothing """
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -21,56 +20,25 @@ def macd(series, fast=12, slow=26, signal=9):
     return macd_line, signal_line
 
 def analyze_signals(row):
-    """
-    מחזיר מילון עם ניתוח הפעולה לכל אינדיקטור
-    """
-    signals = {
-        "score": 0,
-        "rsi_action": "Hold",
-        "macd_action": "Hold",
-        "trend_action": "Hold",
-        "summary": "Neutral"
-    }
-    
-    # 1. ניתוח RSI
-    r = row["RSI"]
-    if r < 30:
-        signals["rsi_action"] = "BUY (Oversold)"
-        signals["score"] += 1
-    elif r > 70:
-        signals["rsi_action"] = "SELL (Overbought)"
-        signals["score"] -= 1
-    else:
-        signals["rsi_action"] = "Wait / Neutral"
+    score = 0
+    # RSI
+    if row["RSI"] < 30: rsi_act, score = "קנייה (מכירת יתר)", score + 1
+    elif row["RSI"] > 70: rsi_act, score = "מכירה (קניית יתר)", score - 1
+    else: rsi_act = "המתנה / נייטרלי"
 
-    # 2. ניתוח MACD
-    if row["MACD"] > row["MACD_SIGNAL"]:
-        signals["macd_action"] = "BUY (Momentum Up)"
-        signals["score"] += 1
-    else:
-        signals["macd_action"] = "SELL (Momentum Down)"
-        signals["score"] -= 1
+    # MACD
+    if row["MACD"] > row["MACD_SIGNAL"]: macd_act, score = "קנייה (מומנטום חיובי)", score + 1
+    else: macd_act, score = "מכירה (מומנטום שלילי)", score - 1
 
-    # 3. ניתוח מגמה (SMA50)
-    price = row["Close"]
-    sma50 = row["SMA50"]
-    if price > sma50:
-        signals["trend_action"] = "Bullish Trend (Price > SMA50)"
-        signals["score"] += 1
-    else:
-        signals["trend_action"] = "Bearish Trend (Price < SMA50)"
-        signals["score"] -= 1
+    # Trend
+    if row["Close"] > row["SMA50"]: trend_act, score = "מגמה עולה (מעל ממוצע 50)", score + 1
+    else: trend_act, score = "מגמה יורדת (מתחת לממוצע 50)", score - 1
 
-    # סיכום כללי
-    if signals["score"] >= 2:
-        signals["summary"] = "STRONG BUY 🟢"
-    elif signals["score"] == 1:
-        signals["summary"] = "BUY 🟢"
-    elif signals["score"] == -1:
-        signals["summary"] = "SELL 🔴"
-    elif signals["score"] <= -2:
-        signals["summary"] = "STRONG SELL 🔴"
-    else:
-        signals["summary"] = "NEUTRAL ⚪"
+    # Final Score
+    if score >= 2: summary = "קנייה חזקה 🟢"
+    elif score == 1: summary = "קנייה 🟢"
+    elif score == -1: summary = "מכירה 🔴"
+    elif score <= -2: summary = "מכירה חזקה 🔴"
+    else: summary = "נייטרלי ⚪"
 
-    return signals
+    return {"score": score, "summary": summary, "rsi": rsi_act, "macd": macd_act, "trend": trend_act}
