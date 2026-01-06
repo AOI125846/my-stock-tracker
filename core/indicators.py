@@ -1,48 +1,81 @@
 import pandas as pd
 
-def rsi(series, period=14):
-    delta = series.diff()
+def calculate_indicators(df, ma_period_type):
+    """
+    מחשב אינדיקטורים ומוסיף אותם ל-DataFrame
+    """
+    # RSI
+    delta = df['Close'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
-    avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
+    avg_gain = gain.ewm(com=13, adjust=False).mean()
+    avg_loss = loss.ewm(com=13, adjust=False).mean()
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    df['RSI'] = 100 - (100 / (1 + rs))
 
-def macd(series):
-    exp1 = series.ewm(span=12, adjust=False).mean()
-    exp2 = series.ewm(span=26, adjust=False).mean()
-    macd_line = exp1 - exp2
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    return macd_line, signal_line
+    # MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-def analyze_tech_signals(df, ma_periods, historical_levels):
-    last_row = df.iloc[-1]
+    # ממוצעים נעים לפי בחירה
+    if ma_period_type == "טווח קצר (סווינג מהיר)":
+        periods = [9, 20, 50]
+    else: # טווח ארוך
+        periods = [100, 150, 200]
+        
+    for p in periods:
+        df[f'SMA_{p}'] = df['Close'].rolling(p).mean()
+        
+    return df, periods
+
+def generate_explanations(df, periods, levels):
+    """
+    מייצר הסברים מילוליים לסוחר
+    """
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
     explanations = []
     
-    # ניתוח RSI
-    r_val = last_row['RSI']
-    if r_val > 70:
-        explanations.append(f"🔴 מכירה: RSI בערך {r_val:.1f} מעיד על 'קניית יתר' - המחיר מתוח מדי למעלה.")
-    elif r_val < 30:
-        explanations.append(f"🟢 קנייה: RSI בערך {r_val:.1f} מעיד על 'מכירת יתר' - הזדמנות לכניסה בנמוך.")
-    
-    # ניתוח MACD
-    if last_row['MACD'] > last_row['MACD_Signal']:
-        explanations.append("🟢 קנייה: קו ה-MACD חצה מעל קו הסיגנל (קו חוצה סיגנל) - מומנטום חיובי מתחזק.")
+    # 1. ניתוח RSI
+    rsi_val = last['RSI']
+    if rsi_val > 70:
+        explanations.append(f"⚠️ **RSI גבוה ({rsi_val:.1f}):** המניה ב'קניית יתר' (Overbought). מבחינה סטטיסטית, הסיכוי לתיקון למטה גובר. היזהר מכניסה לונג עכשיו.")
+    elif rsi_val < 30:
+        explanations.append(f"✅ **RSI נמוך ({rsi_val:.1f}):** המניה ב'מכירת יתר' (Oversold). ייתכן שהירידות מוצו ויש הזדמנות לעליות בקרוב.")
     else:
-        explanations.append("🔴 מכירה: קו ה-MACD מתחת לסיגנל - המומנטום נחלש.")
+        explanations.append(f"ℹ️ **RSI נייטרלי ({rsi_val:.1f}):** אין איתות קיצון כרגע.")
 
-    # ניתוח ממוצעים נעים (MA)
-    price = last_row['Close']
-    for p in ma_periods:
-        ma_val = last_row[f'SMA_{p}']
-        if price > ma_val:
-            explanations.append(f"📈 מגמה עולה: המחיר מעל ממוצע {p}. הממוצע משמש כרגע כתמיכה.")
+    # 2. ניתוח MACD
+    if last['MACD'] > last['MACD_Signal'] and prev['MACD'] <= prev['MACD_Signal']:
+        explanations.append("✅ **חציית MACD חיובית:** קו ה-MACD חצה את הסיגנל כלפי מעלה. זהו איתות שורי (חיובי) מובהק למומנטום.")
+    elif last['MACD'] < last['MACD_Signal']:
+        explanations.append("🔻 **מומנטום שלילי (MACD):** קו ה-MACD נמצא מתחת לסיגנל. המומנטום כרגע עם המוכרים.")
+
+    # 3. ניתוח ממוצעים נעים
+    price = last['Close']
+    trends = []
+    for p in periods:
+        sma_val = last[f'SMA_{p}']
+        if price > sma_val:
+            trends.append(f"מעל ממוצע {p}")
         else:
-            explanations.append(f"📉 מגמה יורדת: המחיר מתחת לממוצע {p}. הממוצע מהווה התנגדות.")
-
-    # הוספת רמות היסטוריות כטקסט
-    explanations.extend(historical_levels)
+            trends.append(f"מתחת לממוצע {p}")
     
+    trend_summary = ", ".join(trends)
+    explanations.append(f"📊 **מצב ממוצעים ({periods}):** המחיר כרגע {trend_summary}.")
+    
+    # הסבר ספציפי לממוצע הקצר ביותר
+    shortest_ma = periods[0]
+    if price > last[f'SMA_{shortest_ma}']:
+        explanations.append(f"💡 **משמעות:** המניה שומרת על מומנטום חיובי בטווח המיידי (מעל ממוצע {shortest_ma}).")
+    else:
+        explanations.append(f"💡 **משמעות:** המניה נחלשה בטווח המיידי (שברה את ממוצע {shortest_ma}).")
+
+    # 4. רמות תמיכה/התנגדות
+    explanations.append("---") # קו מפריד
+    for level in levels:
+        explanations.append(f"🛡️ {level}")
+
     return explanations
