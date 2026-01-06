@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from core.data import load_stock_data
 from core.indicators import calculate_indicators, calculate_final_score, generate_explanations
-import uuid # ליצירת מזהה ייחודי לכל טרייד
+from utils.export import to_excel
+import uuid 
 
 # === הגדרות עמוד ===
 st.set_page_config(page_title="מערכת המסחר של ישראל", layout="wide", page_icon="🇮🇱")
@@ -20,20 +21,28 @@ st.markdown("""
 
 # === ניהול זיכרון (Session State) ===
 if 'trades' not in st.session_state:
-    st.session_state.trades = [] # רשימת הטריידים
+    st.session_state.trades = [] 
 
 # === כותרת ===
 st.markdown("<h1 style='text-align: center; color: #004085;'>🦅 מערכת המסחר המקצועית</h1>", unsafe_allow_html=True)
+
+# === סרגל צדי - איפוס והגדרות ===
+with st.sidebar:
+    st.header("⚙️ ניהול מערכת")
+    if st.button("🗑️ מחק נתונים ואפס מערכת", type="primary"):
+        st.session_state.trades = []
+        st.session_state.clear()
+        st.rerun()
+    st.info("אם נתקלת בשגיאה, לחץ על הכפתור למעלה לאיפוס.")
 
 # === שורת חיפוש ממורכזת וקצרה ===
 col_spacer1, col_search, col_spacer2 = st.columns([1, 2, 1])
 with col_search:
     with st.form(key='search_form'):
         ticker_input = st.text_input("הקלד סימול (למשל TSLA) ולחץ Enter", placeholder="🔎 חיפוש מניה").upper()
-        # כפתור מוסתר כדי שהטופס יעבוד עם אנטר, אך לא יתפוס מקום ויזואלי מיותר
         submit = st.form_submit_button("חפש", use_container_width=True)
 
-# בחירת ממוצעים (מופיע תמיד)
+# בחירת ממוצעים
 ma_type = st.radio("", ["טווח קצר (סווינג מהיר)", "טווח ארוך (השקעה/מגמה)"], horizontal=True)
 
 # === לוגיקה ראשית ===
@@ -42,12 +51,12 @@ if ticker_input:
     df, full_name, next_earnings, levels = load_stock_data(ticker_input)
     
     if df is not None and not df.empty:
-        # 2. חישוב אינדיקטורים וציונים
+        # 2. חישוב אינדיקטורים
         df, periods = calculate_indicators(df, ma_type)
         last_row = df.iloc[-1]
         score, recommendation, color = calculate_final_score(last_row, periods)
         
-        # 3. הצגת כרטיס מידע ראשי
+        # 3. כרטיס מידע ראשי
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
         c1.metric("מחיר אחרון", f"${last_row['Close']:.2f}", f"{last_row['Close'] - df.iloc[-2]['Close']:.2f}")
@@ -60,15 +69,11 @@ if ticker_input:
         # --- טאב גרף ---
         with tab_chart:
             fig = go.Figure()
-            # נרות
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='מחיר'))
-            # ממוצעים
             for p in periods:
                 fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA_{p}'], name=f'SMA {p}', line=dict(width=1)))
-            # Bollinger Bands
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dot'), name='B-Upper'))
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dot'), fill='tonexty', name='B-Lower'))
-            
             fig.update_layout(height=600, xaxis_rangeslider_visible=False, template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
@@ -76,31 +81,29 @@ if ticker_input:
         with tab_info:
             explanations = generate_explanations(df, periods)
             col_exp1, col_exp2 = st.columns(2)
-            
             with col_exp1:
                 st.subheader("📋 הסבר איתותים")
                 for exp in explanations:
                     st.info(exp)
-                
             with col_exp2:
                 st.subheader("🛡️ תמיכה והתנגדות")
                 for lvl in levels:
                     st.write(f"• {lvl}")
 
-        # --- טאב יומן מסחר (חדש ומשודרג!) ---
+        # --- טאב יומן מסחר ---
         with tab_journal:
             st.subheader("ניהול פוזיציות למניה זו")
             
-            # טופס פתיחת עסקה חדשה
+            # טופס פתיחה
             with st.expander("➕ פתח עסקה חדשה", expanded=True):
                 c_new1, c_new2, c_new3 = st.columns(3)
                 buy_price = c_new1.number_input("מחיר קנייה", value=float(last_row['Close']), format="%.2f")
                 qty = c_new2.number_input("כמות מניות", value=10, min_value=1)
-                notes = c_new3.text_input("הערות (למה נכנסתי?)")
+                notes = c_new3.text_input("הערות")
                 
-                if st.button("בצע רכישה והוסף ליומן 💾"):
+                if st.button("בצע רכישה 💾"):
                     new_trade = {
-                        "id": str(uuid.uuid4()), # מזהה ייחודי
+                        "id": str(uuid.uuid4()),
                         "ticker": ticker_input,
                         "date_open": pd.Timestamp.now().strftime("%d/%m/%Y"),
                         "buy_price": buy_price,
@@ -120,42 +123,43 @@ if ticker_input:
             if not st.session_state.trades:
                 st.info("עדיין אין עסקאות מתועדות.")
             else:
-                # לולאה להצגת הטריידים עם אפשרות ניהול
+                # מחיקת טריידים פגומים (תיקון לשגיאה שלך)
+                valid_trades = [t for t in st.session_state.trades if 'ticker' in t]
+                if len(valid_trades) < len(st.session_state.trades):
+                    st.session_state.trades = valid_trades
+                    st.rerun()
+
                 for i, trade in enumerate(st.session_state.trades):
-                    # מציג רק טריידים ששייכים למניה הנוכחית או את כולם? נציג את כולם לנוחות
                     with st.container():
                         c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 1, 1])
-                        c1.write(f"**{trade['ticker']}** ({trade['date_open']})")
-                        c2.write(f"קנייה: ${trade['buy_price']} (כמות: {trade['qty']})")
                         
-                        # חישוב רווח "על הנייר" אם פתוח
-                        current_val = trade['qty'] * last_row['Close']
-                        cost_val = trade['qty'] * trade['buy_price']
+                        # שימוש ב-get כדי למנוע קריסה
+                        ticker_display = trade.get('ticker', 'Unknown')
+                        date_display = trade.get('date_open', '-')
                         
-                        if trade['status'] == "פתוח 🟢":
-                            # כפתור סגירה
-                            close_p = c3.number_input(f"מחיר יציאה", value=float(last_row['Close']), key=f"p_{trade['id']}")
-                            if c4.button("סגור עסקה 💰", key=f"close_{trade['id']}"):
-                                # חישוב: רווח גולמי פחות 12 דולר עמלות
+                        c1.write(f"**{ticker_display}** ({date_display})")
+                        c2.write(f"קנייה: ${trade.get('buy_price', 0)} ({trade.get('qty', 0)} יח')")
+                        
+                        status = trade.get('status', 'סגור 🔴')
+                        
+                        if status == "פתוח 🟢":
+                            close_p = c3.number_input("יציאה", value=float(last_row['Close']), key=f"p_{i}")
+                            if c4.button("סגור 💰", key=f"close_{i}"):
                                 gross_pnl = (close_p - trade['buy_price']) * trade['qty']
-                                net_pnl = gross_pnl - 12 
-                                
+                                net_pnl = gross_pnl - 12
                                 st.session_state.trades[i]['status'] = "סגור 🔴"
                                 st.session_state.trades[i]['close_price'] = close_p
                                 st.session_state.trades[i]['profit'] = net_pnl
                                 st.rerun()
                         else:
-                            # אם סגור
-                            pnl = trade['profit']
+                            pnl = trade.get('profit', 0)
                             color_pnl = "green" if pnl > 0 else "red"
-                            c3.markdown(f"נסגר ב: ${trade['close_price']}")
-                            c4.markdown(f"רווח נקי: <span style='color:{color_pnl}; font-weight:bold'>${pnl:.2f}</span> (כולל עמלות)", unsafe_allow_html=True)
+                            c3.markdown(f"נסגר ב: ${trade.get('close_price', 0)}")
+                            c4.markdown(f"רווח: <span style='color:{color_pnl}'>${pnl:.2f}</span>", unsafe_allow_html=True)
 
-                        # כפתור מחיקה
-                        if c6.button("🗑️", key=f"del_{trade['id']}"):
+                        if c6.button("🗑️", key=f"del_{i}"):
                             st.session_state.trades.pop(i)
                             st.rerun()
-                        
                         st.markdown("---")
 
     elif ticker_input:
