@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 def calculate_indicators(df, ma_period_type):
-    # RSI - מדד העוצמה היחסית
+    # RSI
     delta = df['Close'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -11,19 +11,19 @@ def calculate_indicators(df, ma_period_type):
     rs = avg_gain / avg_loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    # MACD - מומנטום
+    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-    # Bollinger Bands - רצועות בולינגר (תנודתיות וקיצון)
+    # Bollinger Bands
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Middle'] + (2 * df['BB_Std'])
     df['BB_Lower'] = df['BB_Middle'] - (2 * df['BB_Std'])
 
-    # Stochastic Oscillator - מהירות המחיר
+    # Stochastic Oscillator
     low_14 = df['Low'].rolling(14).min()
     high_14 = df['High'].rolling(14).max()
     df['Stoch_K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
@@ -35,35 +35,32 @@ def calculate_indicators(df, ma_period_type):
         
     return df, periods
 
+def calculate_final_score(row, periods):
+    score = 50
+    # לוגיקת ניקוד (RSI, MACD, MA)
+    if row['RSI'] < 30: score += 15
+    elif row['RSI'] > 70: score -= 15
+    if row['MACD'] > row['MACD_Signal']: score += 15
+    else: score -= 15
+    
+    score = max(0, min(100, score))
+    if score >= 70: return score, "קנייה ✅", "green"
+    elif score <= 30: return score, "מכירה 🔻", "red"
+    return score, "נייטרלי ✋", "gray"
+
 def generate_explanations(df, periods):
     last = df.iloc[-1]
-    explanations = []
+    exps = []
+    # RSI
+    if last['RSI'] > 70: exps.append(f"🔴 **RSI ({last['RSI']:.1f}):** קניית יתר - המחיר גבוה מדי.")
+    elif last['RSI'] < 30: exps.append(f"🟢 **RSI ({last['RSI']:.1f}):** מכירת יתר - הזדמנות קנייה.")
+    # MACD
+    if last['MACD'] > last['MACD_Signal']: exps.append("🚀 **MACD:** מומנטום חיובי (קו חוצה סיגנל מעלה).")
+    else: exps.append("📉 **MACD:** מומנטום שלילי.")
+    # Bollinger
+    if last['Close'] > last['BB_Upper']: exps.append("⚠️ **בולינגר:** המחיר חורג מהרצועה העליונה - תמחור גבוה.")
+    elif last['Close'] < last['BB_Lower']: exps.append("💰 **בולינגר:** המחיר מתחת לרצועה התחתונה - זול טכנית.")
+    # Stochastic
+    if last['Stoch_K'] > 80: exps.append("⚡ **סטוכסטיק:** מהירות המחיר גבוהה מאוד, ייתכן שינוי כיוון.")
     
-    # ניתוח RSI
-    if last['RSI'] > 70:
-        explanations.append(f"🔴 **RSI ({last['RSI']:.1f}):** קניית יתר קיצונית. המחיר 'מתוח' מדי למעלה ועלול לבצע תיקון.")
-    elif last['RSI'] < 30:
-        explanations.append(f"🟢 **RSI ({last['RSI']:.1f}):** מכירת יתר. המניה זולה סטטיסטית, הזדמנות להיפוך מעלה.")
-    else:
-        explanations.append(f"⚪ **RSI ({last['RSI']:.1f}):** מצב נייטרלי, אין קיצון כרגע.")
-
-    # ניתוח MACD
-    if last['MACD'] > last['MACD_Signal']:
-        explanations.append("🚀 **MACD:** קו המומנטום מעל קו הסיגנל. המגמה כרגע חיובית.")
-    else:
-        explanations.append("📉 **MACD:** קו המומנטום מתחת לסיגנל. היזהר, המומנטום כרגע שלילי.")
-
-    # ניתוח בולינגר
-    if last['Close'] > last['BB_Upper']:
-        explanations.append("⚠️ **רצועות בולינגר:** המחיר נוגע ברצועה העליונה. תמחור גבוה ביחס לממוצע.")
-    elif last['Close'] < last['BB_Lower']:
-        explanations.append("💰 **רצועות בולינגר:** המחיר פרץ את הרצועה התחתונה. הזדמנות קנייה טכנית.")
-
-    # ניתוח ממוצעים נעים
-    main_ma = periods[1] # ממוצע 20 או 150
-    if last['Close'] > last[f'SMA_{main_ma}']:
-        explanations.append(f"📈 **מגמה:** המניה נסחרת מעל ממוצע {main_ma}, מה שמעיד על כוח של קונים.")
-    else:
-        explanations.append(f"📉 **מגמה:** המניה מתחת לממוצע {main_ma}. המגמה בטווח זה נחשבת שלילית.")
-
-    return explanations
+    return exps
