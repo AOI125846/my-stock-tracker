@@ -2,78 +2,76 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from core.data import load_stock_data
-from core.indicators import rsi, macd, get_detailed_signal
+from core.indicators import rsi, macd, analyze_tech_signals
 from utils.export import to_excel
 
-# הגדרות עיצוב ו-RTL
-st.set_page_config(page_title="סורק מניות מקצועי", layout="wide")
+st.set_page_config(page_title="מערכת מעקב מניות", layout="wide")
+
+# אתחול יומן טריידים בזיכרון אם לא קיים
+if 'trades' not in st.session_state:
+    st.session_state.trades = []
+
 st.markdown("""
     <style>
     .main { direction: rtl; text-align: right; }
-    div.stButton > button { background-color: #007bff; color: white; border-radius: 20px; padding: 10px 25px; }
-    .stock-card { background-color: #f8f9fa; border-radius: 15px; padding: 20px; border-right: 5px solid #007bff; margin-bottom: 20px; }
+    .stTabs [data-baseweb="tab-list"] { direction: rtl; }
+    .signal-box { background-color: #f0f2f6; padding: 15px; border-radius: 10px; border-right: 5px solid #007bff; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📈 מערכת מעקב וניתוח מניות")
+st.title("📈 מערכת ניתוח ומעקב מניות")
 
-# סרגל צדי - הזנת מניה בלבד
+# סרגל צדי
 with st.sidebar:
-    st.header("🔍 חיפוש מניה")
-    ticker_input = st.text_input("הזן סימול מניה (למשל NVDA)", "AAPL").upper()
-    ma_type = st.radio("בחר טווח ממוצעים נעים:", ["טווח קצר (9, 20, 50)", "טווח ארוך (100, 150, 200)"])
-    analyze_btn = st.button("נתח מניה")
+    st.header("🔍 הגדרות")
+    ticker_symbol = st.text_input("סימול מניה", "AAPL").upper()
+    ma_choice = st.selectbox("בחר טווח ממוצעים נעים", ["טווח קצר (9, 20, 50)", "טווח ארוך (100, 150, 200)"])
+    analyze_btn = st.button("בצע ניתוח")
 
 if analyze_btn:
-    # טעינת נתונים (ברירת מחדל לשנה אחרונה לניתוח טכני)
-    start_date = pd.to_datetime("today") - pd.DateOffset(years=1)
-    df, full_name, next_earnings = load_stock_data(ticker_input, start_date, pd.to_datetime("today"))
+    with st.spinner('טוען נתונים...'):
+        df, full_name, earnings, levels = load_stock_data(ticker_symbol)
     
-    if df.empty:
-        st.error("לא נמצאו נתונים עבור הסימול שהוזן.")
-    else:
-        # הצגת שם מלא ופרטי מניה
-        st.markdown(f"""
-            <div class="stock-card">
-                <h2>{full_name} ({ticker_input})</h2>
-                <p><b>תאריך דוחות קרוב:</b> {next_earnings}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    if not df.empty:
+        st.subheader(f"📊 {full_name} ({ticker_symbol})")
+        st.write(f"📅 דוחות קרובים: **{earnings}**")
 
-        # חישוב אינדיקטורים
+        # חישובים
         df['RSI'] = rsi(df['Close'])
         df['MACD'], df['MACD_Signal'] = macd(df['Close'])
-        
-        # בחירת ממוצעים לפי בחירת המשתמש
-        ma_periods = [9, 20, 50] if "קצר" in ma_type else [100, 150, 200]
-        for p in ma_periods:
+        ma_list = [9, 20, 50] if "קצר" in ma_choice else [100, 150, 200]
+        for p in ma_list:
             df[f'SMA_{p}'] = df['Close'].rolling(p).mean()
 
-        tab1, tab2, tab3 = st.tabs(["🚦 איתותי פעולה", "📈 גרף אינטראקטיבי", "📝 יומן טריידים ומעקב"])
+        tab1, tab2, tab3 = st.tabs(["🚦 אינדיקטורים והסברים", "📈 גרף טכני", "📝 ניהול ויומן טריידים"])
 
         with tab1:
-            summary, reasons = get_detailed_signal(df.iloc[-1])
-            st.subheader(f"המלצת מערכת: {summary}")
-            for r in reasons:
-                st.write(f"• {r}")
-            
-            st.info("💡 **מה זה אומר?** הממוצעים הנעים עוזרים לזהות את כיוון המגמה. פריצה של מחיר מעל ממוצע נחשבת לאיתות כניסה חיובי.")
+            st.markdown("### ניתוח טכני והסברי פעולה")
+            signals = analyze_tech_signals(df, ma_list, levels)
+            for s in signals:
+                st.markdown(f"<div class='signal-box' style='margin-bottom:10px;'>{s}</div>", unsafe_allow_html=True)
 
         with tab2:
             fig = go.Figure()
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='מחיר'))
-            for p in ma_periods:
-                fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA_{p}'], name=f'ממוצע {p}'))
-            fig.update_layout(xaxis_rangeslider_visible=False, height=600, template="plotly_white")
+            for p in ma_list:
+                fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA_{p}'], name=f'SMA {p}', line=dict(width=1.5)))
+            fig.update_layout(height=600, xaxis_rangeslider_visible=False, template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
         with tab3:
-            st.subheader("מעקב אחר טריידים")
-            col1, col2 = st.columns(2)
-            trade_start = col1.date_input("תאריך כניסה לטרייד")
-            trade_end = col2.date_input("תאריך יעד/יציאה")
-            st.write(f"מעקב אחר המניה בטווח שבין {trade_start} ל-{trade_end}")
+            st.subheader("שמירת טרייד חדש")
+            c1, c2, c3 = st.columns(3)
+            entry_p = c1.number_input("מחיר כניסה", value=float(df['Close'].iloc[-1]))
+            target_p = c2.number_input("מחיר יעד", value=entry_p * 1.1)
+            stop_p = c3.number_input("סטופ לוס", value=entry_p * 0.95)
             
-            # הורדה לאקסל
-            excel_data = to_excel(df.tail(30))
-            st.download_button("📥 הורד נתוני תקופה לאקסל", data=excel_data, file_name=f"{ticker_input}_tracker.xlsx")
+            if st.button("שמור טרייד ליומן"):
+                new_trade = {"מניה": ticker_symbol, "כניסה": entry_p, "יעד": target_p, "סטופ": stop_p, "תאריך": pd.to_datetime("today").strftime('%d/%m/%Y')}
+                st.session_state.trades.append(new_trade)
+                st.success("הטרייד נשמר!")
+
+            if st.session_state.trades:
+                st.markdown("---")
+                st.subheader("הטריידים שלי")
+                st.table(pd.DataFrame(st.session_state.trades))
