@@ -16,25 +16,33 @@ def macd(series):
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
     return macd_line, signal_line
 
-def get_detailed_signal(row):
+def analyze_tech_signals(df, ma_periods, historical_levels):
+    last_row = df.iloc[-1]
     explanations = []
-    score = 0
     
     # ניתוח RSI
-    if row['RSI'] > 70:
-        explanations.append("מכירת יתר (RSI גבוה) - המניה עשויה להיות יקרה מדי")
-        score -= 1
-    elif row['RSI'] < 30:
-        explanations.append("קניית יתר (RSI נמוך) - הזדמנות פוטנציאלית לתיקון מעלה")
-        score += 1
-        
+    r_val = last_row['RSI']
+    if r_val > 70:
+        explanations.append(f"🔴 מכירה: RSI בערך {r_val:.1f} מעיד על 'קניית יתר' - המחיר מתוח מדי למעלה.")
+    elif r_val < 30:
+        explanations.append(f"🟢 קנייה: RSI בערך {r_val:.1f} מעיד על 'מכירת יתר' - הזדמנות לכניסה בנמוך.")
+    
     # ניתוח MACD
-    if row['MACD'] > row['MACD_Signal']:
-        explanations.append("קו MACD חצה מעל קו הסיגנל - מומנטום חיובי")
-        score += 1
+    if last_row['MACD'] > last_row['MACD_Signal']:
+        explanations.append("🟢 קנייה: קו ה-MACD חצה מעל קו הסיגנל (קו חוצה סיגנל) - מומנטום חיובי מתחזק.")
     else:
-        explanations.append("קו MACD חצה מתחת לקו הסיגנל - מומנטום שלילי")
-        score -= 1
-        
-    summary = "קנייה" if score > 0 else "מכירה" if score < 0 else "המתנה"
-    return summary, explanations
+        explanations.append("🔴 מכירה: קו ה-MACD מתחת לסיגנל - המומנטום נחלש.")
+
+    # ניתוח ממוצעים נעים (MA)
+    price = last_row['Close']
+    for p in ma_periods:
+        ma_val = last_row[f'SMA_{p}']
+        if price > ma_val:
+            explanations.append(f"📈 מגמה עולה: המחיר מעל ממוצע {p}. הממוצע משמש כרגע כתמיכה.")
+        else:
+            explanations.append(f"📉 מגמה יורדת: המחיר מתחת לממוצע {p}. הממוצע מהווה התנגדות.")
+
+    # הוספת רמות היסטוריות כטקסט
+    explanations.extend(historical_levels)
+    
+    return explanations
