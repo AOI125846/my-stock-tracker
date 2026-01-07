@@ -1,6 +1,7 @@
 streamlit>=1.18
-yfinance>=0.2.18
-pandas>=1.5
-numpy>=1.23
-plotly>=5.11
-openpyxl>=3.1
+yfinance
+pandas
+numpy
+plotly
+openpyxl
+streamlit-tradingview-chart
