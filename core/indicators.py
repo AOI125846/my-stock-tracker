@@ -3,6 +3,9 @@ import numpy as np
 
 # --- חישובים טכניים ---
 def calculate_all_indicators(df, ma_type):
+    # וידוא שאין עמודות כפולות ששוברות את החישוב
+    df = df.loc[:, ~df.columns.duplicated()]
+    
     periods = [9, 20, 50] if "קצר" in ma_type else [100, 150, 200]
     for p in periods:
         df[f'SMA_{p}'] = df['Close'].rolling(window=p).mean()
@@ -25,11 +28,6 @@ def calculate_all_indicators(df, ma_type):
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
     df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
-
-    # Stochastic
-    low_14 = df['Low'].rolling(window=14).min()
-    high_14 = df['High'].rolling(window=14).max()
-    df['Stoch'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
     
     return df, periods
 
@@ -70,28 +68,33 @@ def get_smart_analysis(df, periods):
     
     return analysis
 
-# --- פרשנות פונדמנטלית (חדש!) ---
+# --- פרשנות פונדמנטלית ---
 def analyze_fundamentals(info):
     insights = []
-    
+    if not info:
+        return ["אין נתונים פנדמנטליים זמינים למניה זו."]
+
     # מכפיל רווח (PE)
     pe = info.get('forwardPE', None)
     if pe:
-        if pe < 15: insights.append(f"✅ **מכפיל רווח ({pe:.2f}):** המניה נחשבת זולה ביחס לרווחיה (Value).")
-        elif pe > 40: insights.append(f"⚠️ **מכפיל רווח ({pe:.2f}):** המניה מתומחרת יקר מאוד (צמיחה גבוהה נדרשת להצדקה).")
-        else: insights.append(f"ℹ️ **מכפיל רווח ({pe:.2f}):** תמחור סביר וממוצע לשוק.")
+        if pe < 15: insights.append(f"✅ **מכפיל רווח ({pe:.2f}):** המניה זולה ביחס לרווחיה (Value).")
+        elif pe > 40: insights.append(f"⚠️ **מכפיל רווח ({pe:.2f}):** המניה יקרה מאוד (צמיחה גבוהה).")
+        else: insights.append(f"ℹ️ **מכפיל רווח ({pe:.2f}):** תמחור סביר.")
     
     # יעד אנליסטים
-    current_price = info.get('currentPrice', 0)
+    current_price = info.get('currentPrice', info.get('previousClose', 0))
     target_price = info.get('targetMeanPrice', 0)
+    
     if current_price and target_price:
-        upside = ((target_price - current_price) / current_price) * 100
-        if upside > 10: insights.append(f"🎯 **תחזית אנליסטים:** צופים עלייה של {upside:.1f}% למחיר {target_price}$.")
-        elif upside < 0: insights.append(f"🔻 **תחזית אנליסטים:** המחיר הנוכחי גבוה ממחיר היעד הממוצע ({target_price}$).")
+        # הגנה מפני חלוקה באפס
+        if current_price > 0:
+            upside = ((target_price - current_price) / current_price) * 100
+            if upside > 10: insights.append(f"🎯 **תחזית אנליסטים:** צופים עלייה של {upside:.1f}% למחיר {target_price}$.")
+            elif upside < 0: insights.append(f"🔻 **תחזית אנליסטים:** המחיר כרגע גבוה ממחיר היעד הממוצע ({target_price}$).")
 
     # רווחיות
     margins = info.get('profitMargins', 0)
     if margins > 0.2: insights.append(f"💎 **רווחיות:** החברה רווחית מאוד (שולי רווח של {margins*100:.1f}%).")
-    elif margins < 0: insights.append(f"⚠️ **סיכון:** החברה מפסידה כסף כרגע (שולי רווח שליליים).")
+    elif margins < 0: insights.append(f"⚠️ **סיכון:** החברה מפסידה כסף כרגע.")
 
     return insights
