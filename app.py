@@ -17,16 +17,16 @@ st.title("🦅 מערכת הניתוח המקצועית")
 # --- שלב 1: חיפוש מניה ---
 col_search_1, col_search_2, col_search_3 = st.columns([1, 2, 1])
 with col_search_2:
-    ticker = st.text_input("הזן סימול מניה (למשל GOOGL)", value="").upper()
+    ticker_input = st.text_input("הזן סימול מניה (למשל MARA, TSLA)", value="").upper()
 
 # --- בדיקה אם הוזן סימול ---
-if ticker:
+if ticker_input:
     # טעינת נתונים
-    df, info, full_name = load_stock_data(ticker)
+    df, info, full_name = load_stock_data(ticker_input)
     
-    # --- בדיקה אם הנתונים תקינים ---
+    # --- בדיקה קריטית אם הנתונים תקינים ---
     if df is None or df.empty:
-        st.error(f"❌ לא נמצאו נתונים עבור הסימול '{ticker}'. אנא בדוק את האיות או נסה סימול אחר.")
+        st.error(f"❌ לא נמצאו נתונים עבור הסימול '{ticker_input}'. אנא בדוק את האיות או נסה שוב.")
     else:
         # --- שלב 2: הגדרות ניתוח (מופיע רק אחרי טעינה תקינה) ---
         st.markdown("---")
@@ -41,8 +41,8 @@ if ticker:
         # חישוב ציון
         score, rec_text, color = calculate_final_score(last_row, periods)
         
-        # כותרת ראשית עם שם החברה והמחיר
-        st.markdown(f"<h2 style='text-align:center;'>{full_name} ({ticker}) - ${last_row['Close']:.2f}</h2>", unsafe_allow_html=True)
+        # כותרת ראשית
+        st.markdown(f"<h2 style='text-align:center;'>{full_name} ({ticker_input}) - ${last_row['Close']:.2f}</h2>", unsafe_allow_html=True)
         
         # תצוגת הציון
         st.markdown(f"""
@@ -51,7 +51,7 @@ if ticker:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- יצירת הטאבים (כולל הטאב החדש) ---
+        # --- טאבים ---
         tab_chart, tab_tech, tab_fund, tab_journal = st.tabs(["📈 גרף נקי", "🧠 ניתוח טכני", "🏢 ניתוח פנדמנטלי", "📓 יומן טריידים"])
 
         # 1. טאב גרף
@@ -59,50 +59,46 @@ if ticker:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="מחיר")])
             colors = ['#FFA500', '#0000FF', '#800080']
             for i, p in enumerate(periods):
-                fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA_{p}'], name=f'ממוצע {p}', line=dict(color=colors[i], width=1.5)))
+                if f'SMA_{p}' in df.columns:
+                    fig.add_trace(go.Scatter(x=df.index, y=df[f'SMA_{p}'], name=f'ממוצע {p}', line=dict(color=colors[i], width=1.5)))
             fig.update_layout(height=600, template="plotly_white", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
-        
-
         # 2. טאב טכני
         with tab_tech:
-            st.subheader("פרשנות האינדיקטורים הטכניים")
+            st.subheader("פרשנות טכנית")
             tech_analysis = get_smart_analysis(df, periods)
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                for item in tech_analysis:
-                    st.info(item)
+                if tech_analysis:
+                    for item in tech_analysis:
+                        st.info(item)
+                else:
+                    st.write("אין מספיק נתונים לניתוח טכני מלא.")
             with col_t2:
-                st.write("כאן מוצג ניתוח המבוסס על תבניות המחיר (RSI, MACD, בולינגר). השתמש בזה לתזמון הכניסה והיציאה.")
+                st.write("כאן מוצג ניתוח המבוסס על RSI, MACD ורצועות בולינגר.")
 
-        # 3. טאב פנדמנטלי (חדש!)
+        # 3. טאב פנדמנטלי
         with tab_fund:
             st.subheader("📊 ניתוח דוחות ונתונים פיננסיים")
             if info:
                 fund_insights = analyze_fundamentals(info)
                 
-                # הצגת נתוני מפתח בקוביות
+                # הצגת נתוני מפתח (עם הגנה מפני נתונים חסרים)
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("שווי שוק", f"${info.get('marketCap', 0)/1e9:.1f}B")
+                mkt_cap = info.get('marketCap')
+                m1.metric("שווי שוק", f"${mkt_cap/1e9:.1f}B" if mkt_cap else "לא זמין")
                 m2.metric("מכפיל רווח (PE)", f"{info.get('forwardPE', 'N/A')}")
-                m3.metric("תשואת דיבידנד", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "0%")
-                m4.metric("מחיר יעד (אנליסטים)", f"${info.get('targetMeanPrice', 'N/A')}")
+                div_yield = info.get('dividendYield')
+                m3.metric("תשואת דיבידנד", f"{div_yield*100:.2f}%" if div_yield else "0%")
+                m4.metric("מחיר יעד", f"${info.get('targetMeanPrice', 'N/A')}")
                 
                 st.markdown("---")
-                st.markdown("### 💡 מה זה אומר עבורך?")
-                if not fund_insights:
-                    st.warning("אין מספיק נתונים פונדמנטליים לניתוח אוטומטי.")
-                else:
-                    for insight in fund_insights:
-                        st.success(insight)
-                    
-                st.markdown("""
-                > **הסבר לסוחר:** הניתוח הפנדמנטלי בודק את ה"בריאות" של העסק עצמו, ולא רק את הגרף. 
-                > אם החברה רווחית והמכפיל נמוך - היא עשויה להיות השקעה טובה לטווח ארוך, גם אם הגרף יורד כרגע.
-                """)
+                st.markdown("### 💡 תובנות:")
+                for insight in fund_insights:
+                    st.success(insight)
             else:
-                st.warning("לא התקבל מידע פונדמנטלי מהשרת.")
+                st.warning("לא התקבל מידע פונדמנטלי מהשרת, אך ניתן לראות את הגרף.")
 
         # 4. טאב יומן טריידים
         with tab_journal:
@@ -113,7 +109,7 @@ if ticker:
                 q_in = c2.number_input("כמות", value=10)
                 if st.button("שמור"):
                     st.session_state.trades[str(uuid.uuid4())] = {
-                        "ticker": ticker, "date": pd.Timestamp.now().strftime("%d/%m"), 
+                        "ticker": ticker_input, "date": pd.Timestamp.now().strftime("%d/%m"), 
                         "price": p_in, "qty": q_in, "status": "פתוח", "pnl": 0
                     }
                     st.rerun()
