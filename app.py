@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Streamlit – "התיק החכם" - גרסה מונוליתית (כל הפונקציות בקובץ אחד)
+Streamlit – "התיק החכם" - ניתוח מניות וניהול תיק בעברית
 """
 
 import uuid
@@ -29,56 +29,80 @@ st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         background-size: cover;
         background-attachment: fixed;
     }
     .main .block-container {
-        background-color: rgba(255,255,255,0.98);
+        background-color: rgba(255,255,255,0.95);
         padding: 2rem;
-        border-radius: 20px;
-        margin-top: 2rem;
+        border-radius: 15px;
+        margin-top: 1rem;
         direction: rtl;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid #e0e0e0;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: #2c3e50;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    h1 {
+        color: #3498db;
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 10px 16px;
+        font-weight: 600;
     }
     div.stButton > button {
         width: 100%;
-        background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(45deg, #3498db 0%, #2ecc71 100%);
         color: white;
         border: none;
         padding: 0.75rem;
-        border-radius: 10px;
+        border-radius: 8px;
         font-weight: bold;
+        font-size: 1rem;
+        transition: all 0.3s ease;
     }
     div.stButton > button:hover {
-        background: linear-gradient(45deg, #764ba2 0%, #667eea 100%);
+        background: linear-gradient(45deg, #2980b9 0%, #27ae60 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
     }
     .stTextInput input {
         text-align: center;
-        border-radius: 10px;
-        border: 2px solid #667eea;
+        border-radius: 8px;
+        border: 2px solid #3498db;
+        padding: 10px;
+        font-size: 1rem;
     }
     .stSelectbox > div > div {
+        border-radius: 8px;
+        border: 2px solid #3498db;
+    }
+    .stMetric {
+        background: #f8f9fa;
+        padding: 15px;
         border-radius: 10px;
-        border: 2px solid #667eea;
+        border-left: 5px solid #3498db;
+        margin-bottom: 10px;
     }
-    h1, h2, h3, h4 {
-        color: #333;
-        text-align: center;
-    }
-    .stAlert {
-        border-radius: 10px;
-    }
-    .success-box {
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
+    .info-box {
+        background-color: #e8f4fd;
+        border: 1px solid #b6e0fe;
         border-radius: 10px;
         padding: 15px;
         margin: 10px 0;
     }
-    .info-box {
-        background-color: #d1ecf1;
-        border: 1px solid #bee5eb;
+    .success-box {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
         border-radius: 10px;
         padding: 15px;
         margin: 10px 0;
@@ -90,13 +114,28 @@ st.markdown(
         padding: 15px;
         margin: 10px 0;
     }
+    .stock-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 10px 0;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+        border: 1px solid #eaeaea;
+    }
+    .company-info {
+        background: #f8fafc;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border-right: 5px solid #3498db;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ----------------------------------------------------------------------
-# 2️⃣ פונקציות ליבה - כל הפונקציות כאן בקובץ אחד
+# 2️⃣ פונקציות ליבה
 # ----------------------------------------------------------------------
 
 # ---------- פונקציות לטעינת נתונים ----------
@@ -106,33 +145,27 @@ def load_stock_data(ticker):
     טוען נתוני מניות מ-yfinance
     """
     try:
-        # שימוש ב-download עם תקופת זמן ארוכה יותר
         df = yf.download(
             ticker, 
-            period="2y", 
+            period="1y", 
             auto_adjust=True, 
             progress=False,
             timeout=10
         )
         
-        # טיפול ב-MultiIndex columns
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
         if df.empty or len(df) < 5:
             return None, None, ticker
         
-        # משיכת מידע נוסף בנפרד
         info = {}
         full_name = ticker
         
         try:
             t_obj = yf.Ticker(ticker)
             info = t_obj.info
-            
-            # שם מלא של החברה
             full_name = info.get('longName', info.get('shortName', ticker))
-            
         except Exception:
             pass
         
@@ -142,131 +175,104 @@ def load_stock_data(ticker):
         st.error(f"❌ שגיאה בטעינת נתונים עבור {ticker}: {str(e)}")
         return None, None, ticker
 
-
 # ---------- פונקציות אינדיקטורים טכניים ----------
 def calculate_all_indicators(df, ma_type):
     """
     מחשב את כל האינדיקטורים הטכניים
     """
-    # יצירת עותק כדי לא לשנות את המקור
     df_calc = df.copy()
     
-    # ניקוי עמודות כפולות
     if isinstance(df_calc.columns, pd.MultiIndex):
         df_calc.columns = df_calc.columns.get_level_values(0)
     df_calc = df_calc.loc[:, ~df_calc.columns.duplicated()]
     
-    # וידוא שיש עמודת Close
     if 'Close' not in df_calc.columns:
-        raise ValueError("DataFrame חייב לכלול עמודת 'Close'")
+        return df_calc, []
     
-    # בחירת תקופות SMA לפי סוג
     if "קצר" in ma_type:
         periods = [9, 20, 50]
     else:
         periods = [100, 150, 200]
     
-    # חישוב Simple Moving Averages
     for p in periods:
         df_calc[f'SMA_{p}'] = df_calc['Close'].rolling(window=p, min_periods=1).mean()
     
-    # חישוב RSI (Relative Strength Index)
+    # חישוב RSI
     delta = df_calc['Close'].diff()
-    
-    # יצירת סדרות של רווחים והפסדים
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
-    
-    # חישוב ממוצע נע מעריכי
     avg_gain = gain.rolling(window=14, min_periods=1).mean()
     avg_loss = loss.rolling(window=14, min_periods=1).mean()
-    
-    # חישוב RS ו-RSI (עם הגנה מפני חלוקה באפס)
     rs = avg_gain / avg_loss.replace(0, np.nan)
     df_calc['RSI'] = 100 - (100 / (1 + rs))
-    
-    # הגבלת ערכי RSI בין 0-100 והחלפת NaN ב-50
     df_calc['RSI'] = df_calc['RSI'].clip(0, 100).fillna(50)
     
-    # חישוב MACD (Moving Average Convergence Divergence)
+    # חישוב MACD
     ema12 = df_calc['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
     ema26 = df_calc['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
     df_calc['MACD'] = ema12 - ema26
     df_calc['MACD_Signal'] = df_calc['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
-    df_calc['MACD_Histogram'] = df_calc['MACD'] - df_calc['MACD_Signal']
     
     # חישוב Bollinger Bands
     df_calc['BB_Mid'] = df_calc['Close'].rolling(window=20, min_periods=1).mean()
     df_calc['BB_Std'] = df_calc['Close'].rolling(window=20, min_periods=1).std()
     df_calc['BB_Upper'] = df_calc['BB_Mid'] + (2 * df_calc['BB_Std'])
     df_calc['BB_Lower'] = df_calc['BB_Mid'] - (2 * df_calc['BB_Std'])
-    df_calc['BB_Width'] = (df_calc['BB_Upper'] - df_calc['BB_Lower']) / df_calc['BB_Mid']
-    
-    # חישוב ממוצעים נעים מעריכיים נוספים
-    df_calc['EMA_20'] = df_calc['Close'].ewm(span=20, adjust=False, min_periods=1).mean()
-    df_calc['EMA_50'] = df_calc['Close'].ewm(span=50, adjust=False, min_periods=1).mean()
     
     return df_calc, periods
-
 
 def calculate_final_score(row, periods):
     """
     מחשב ציון טכני כולל
     """
-    score = 50  # ציון התחלתי ניטרלי
+    score = 50
     
     try:
-        # RSI - 30 נקודות
         if 'RSI' in row and not pd.isna(row['RSI']):
             if row['RSI'] < 30:
-                score += 15  # מכירת יתר - הזדמנות קנייה
+                score += 15
             elif row['RSI'] > 70:
-                score -= 15  # קניית יתר - הזדמנות מכירה
+                score -= 15
         
-        # MACD - 30 נקודות
         if 'MACD' in row and 'MACD_Signal' in row:
             if not pd.isna(row['MACD']) and not pd.isna(row['MACD_Signal']):
                 if row['MACD'] > row['MACD_Signal']:
-                    score += 15  # MACD מעל סיגנל - מגמה חיובית
+                    score += 15
                 else:
-                    score -= 15  # MACD מתחת לסיגנל - מגמה שלילית
+                    score -= 15
         
-        # מגמה - 20 נקודות (מחיר vs SMA ארוך טווח)
-        long_ma = periods[-1]
-        sma_key = f'SMA_{long_ma}'
-        if sma_key in row and 'Close' in row:
-            if not pd.isna(row[sma_key]) and not pd.isna(row['Close']):
-                if row['Close'] > row[sma_key]:
-                    score += 10  # מחיר מעל SMA - מגמה עולה
-                else:
-                    score -= 10  # מחיר מתחת ל-SMA - מגמה יורדת
+        if periods:
+            long_ma = periods[-1]
+            sma_key = f'SMA_{long_ma}'
+            if sma_key in row and 'Close' in row:
+                if not pd.isna(row[sma_key]) and not pd.isna(row['Close']):
+                    if row['Close'] > row[sma_key]:
+                        score += 10
+                    else:
+                        score -= 10
         
-        # Bollinger Bands - 10 נקודות
         if 'Close' in row and 'BB_Upper' in row and 'BB_Lower' in row:
             if not pd.isna(row['Close']) and not pd.isna(row['BB_Upper']) and not pd.isna(row['BB_Lower']):
                 if row['Close'] < row['BB_Lower']:
-                    score += 5  # מחיר מתחת לרצועה תחתונה - הזדמנות קנייה
+                    score += 5
                 elif row['Close'] > row['BB_Upper']:
-                    score -= 5  # מחיר מעל רצועה עליונה - יתר קנייה
+                    score -= 5
         
     except (KeyError, TypeError):
         pass
     
-    # הגבלת הציון לטווח 0-100
     score = max(0, min(100, score))
     
-    # קביעת המלצה וצבע לפי הציון
     if score >= 80:
-        return score, "קנייה חזקה 🚀", "green"
+        return score, "קנייה חזקה 🚀", "#27ae60"
     elif score >= 60:
-        return score, "קנייה ✅", "#90ee90"
+        return score, "קנייה ✅", "#2ecc71"
     elif score <= 20:
-        return score, "מכירה חזקה 📉", "red"
+        return score, "מכירה חזקה 📉", "#e74c3c"
     elif score <= 40:
-        return score, "מכירה 🔻", "orange"
+        return score, "מכירה 🔻", "#e67e22"
     else:
-        return score, "נייטרלי ✋", "gray"
-
+        return score, "נייטרלי ✋", "#95a5a6"
 
 def get_smart_analysis(df, periods):
     """
@@ -279,58 +285,72 @@ def get_smart_analysis(df, periods):
     
     last = df.iloc[-1]
     
-    # ניתוח RSI
     if 'RSI' in last and not pd.isna(last['RSI']):
         rsi_val = last['RSI']
         if rsi_val > 70:
-            analysis.append(f"🔴 **RSI ({rsi_val:.1f}):** קניית יתר. המחיר 'מתוח' מדי וייתכן תיקון.")
+            analysis.append(f"🔴 **מדד חוזק יחסי ({rsi_val:.1f}):** קניית יתר. המחיר גבוה מדי וייתכן תיקון.")
         elif rsi_val < 30:
-            analysis.append(f"🟢 **RSI ({rsi_val:.1f}):** מכירת יתר. הזדמנות לכניסה עם פוטנציאל לעלייה.")
-        elif 30 <= rsi_val <= 70:
-            analysis.append(f"⚪ **RSI ({rsi_val:.1f}):** בטווח נורמלי. אין איתותי קיצון.")
+            analysis.append(f"🟢 **מדד חוזק יחסי ({rsi_val:.1f}):** מכירת יתר. הזדמנות לכניסה.")
     
-    # ניתוח MACD
     if 'MACD' in last and 'MACD_Signal' in last:
         if not pd.isna(last['MACD']) and not pd.isna(last['MACD_Signal']):
             if last['MACD'] > last['MACD_Signal']:
-                analysis.append("🚀 **MACD:** מומנטום חיובי ומתחזק - סימן למגמת עלייה.")
+                analysis.append("🚀 **מדד התבדלות ממוצעים נעים:** מומנטום חיובי - מגמת עלייה.")
             else:
-                analysis.append("📉 **MACD:** המומנטום נחלש - סימן למגמת ירידה או התארגנות.")
+                analysis.append("📉 **מדד התבדלות ממוצעים נעים:** מומנטום שלילי - מגמת ירידה.")
     
-    # ניתוח מגמה לפי SMA
     if periods:
         long_ma = periods[-1]
         sma_key = f'SMA_{long_ma}'
         if sma_key in last and 'Close' in last:
             if not pd.isna(last[sma_key]) and not pd.isna(last['Close']):
                 if last['Close'] > last[sma_key]:
-                    analysis.append(f"📈 **מגמה ({long_ma} ימים):** המחיר מעל הממוצע - מגמת עלייה.")
+                    analysis.append(f"📈 **מגמה ארוכה ({long_ma} ימים):** המחיר מעל הממוצע - עלייה.")
                 else:
-                    analysis.append(f"📊 **מגמה ({long_ma} ימים):** המחיר מתחת לממוצע - מגמת ירידה.")
+                    analysis.append(f"📊 **מגמה ארוכה ({long_ma} ימים):** המחיר מתחת לממוצע - ירידה.")
     
-    # ניתוח Bollinger Bands
     if 'Close' in last and 'BB_Upper' in last and 'BB_Lower' in last:
         if not pd.isna(last['Close']) and not pd.isna(last['BB_Upper']) and not pd.isna(last['BB_Lower']):
             if last['Close'] > last['BB_Upper']:
-                analysis.append("⚠️ **בולינגר:** המחיר חורג מהרצועה העליונה - יתר קנייה.")
+                analysis.append("⚠️ **רצועות בולינגר:** המחיר חורג מהרצועה העליונה - קניית יתר.")
             elif last['Close'] < last['BB_Lower']:
-                analysis.append("💎 **בולינגר:** המחיר חורג מהרצועה התחתונה - הזדמנות קנייה.")
+                analysis.append("💎 **רצועות בולינגר:** המחיר חורג מהרצועה התחתונה - הזדמנות קנייה.")
     
-    # ניתוח נפח
-    if 'Volume' in df.columns and len(df) > 1:
-        last_volume = df['Volume'].iloc[-1]
-        avg_volume = df['Volume'].iloc[-20:].mean() if len(df) >= 20 else df['Volume'].mean()
-        if last_volume > avg_volume * 1.5:
-            analysis.append("📦 **נפח:** נפח מסחר גבוה מהממוצע - עניין מוגבר במניה.")
-        elif last_volume < avg_volume * 0.5:
-            analysis.append("📦 **נפח:** נפח מסחר נמוך מהממוצע - מיעוט עניין.")
-    
-    # אם אין ניתוחים, נוסיף הודעה כללית
     if not analysis:
         analysis.append("ℹ️ **מידע כללי:** אין איתותים טכניים ברורים. המשך מעקב.")
     
     return analysis
 
+# ---------- פונקציות ניתוח פונדמנטלי ----------
+def translate_field(field_name):
+    """
+    מתרגם שדות מאנגלית לעברית
+    """
+    translations = {
+        'longName': 'שם החברה',
+        'industry': 'תחום עיסוק',
+        'sector': 'סקטור',
+        'exchange': 'בורסה',
+        'country': 'מדינה',
+        'currency': 'מטבע',
+        'website': 'אתר אינטרנט',
+        'marketCap': 'שווי שוק',
+        'forwardPE': 'מכפיל רווח צפוי',
+        'trailingPE': 'מכפיל רווח',
+        'dividendYield': 'תשואת דיבידנד',
+        'profitMargins': 'שולי רווח',
+        'revenueGrowth': 'צמיחת הכנסות',
+        'currentPrice': 'מחיר נוכחי',
+        'targetMeanPrice': 'מחיר יעד ממוצע',
+        'recommendationKey': 'המלצת אנליסטים',
+        'fiftyTwoWeekHigh': 'שיא 52 שבועות',
+        'fiftyTwoWeekLow': 'שפל 52 שבועות',
+        'volume': 'נפח מסחר',
+        'averageVolume': 'נפח ממוצע',
+        'beta': 'בטא (תנודתיות)',
+        'debtToEquity': 'יחס חוב להון'
+    }
+    return translations.get(field_name, field_name)
 
 def analyze_fundamentals(info):
     """
@@ -342,17 +362,15 @@ def analyze_fundamentals(info):
         return ["אין נתונים פונדמנטליים זמינים למניה זו."]
     
     try:
-        # מכפיל רווח (P/E Ratio)
         pe = info.get('forwardPE', info.get('trailingPE', None))
         if pe:
             if pe < 15:
-                insights.append(f"✅ **מכפיל רווח ({pe:.1f}):** המניה זולה ביחס לרווחיה.")
+                insights.append(f"✅ **מכפיל רווח ({pe:.1f}):** המניה זולה יחסית לרווחיה.")
             elif pe > 40:
-                insights.append(f"⚠️ **מכפיל רווח ({pe:.1f}):** המניה יקרה - צפייה לצמיחה גבוהה.")
+                insights.append(f"⚠️ **מכפיל רווח ({pe:.1f}):** המניה יקרה - מצפים לצמיחה גבוהה.")
             else:
-                insights.append(f"ℹ️ **מכפיל רווח ({pe:.1f}):** תמחור סביר ביחס לשוק.")
+                insights.append(f"ℹ️ **מכפיל רווח ({pe:.1f}):** תמחור סביר.")
         
-        # יעד אנליסטים
         current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
         target_price = info.get('targetMeanPrice', info.get('targetMedianPrice', 0))
         
@@ -365,7 +383,6 @@ def analyze_fundamentals(info):
             elif upside < -10:
                 insights.append(f"🔻 **תחזית אנליסטים:** המחיר גבוה ב-{abs(upside):.1f}% ממחיר היעד.")
         
-        # רווחיות
         margins = info.get('profitMargins', 0)
         if margins:
             if margins > 0.2:
@@ -373,14 +390,12 @@ def analyze_fundamentals(info):
             elif margins > 0.1:
                 insights.append(f"👍 **רווחיות:** החברה רווחית ({margins*100:.1f}%).")
             elif margins < 0:
-                insights.append(f"⚠️ **סיכון:** החברה מפסידה כסף כרגע.")
+                insights.append(f"⚠️ **סיכון:** החברה מפסידה כסף.")
         
-        # דיבידנד
         dividend_yield = info.get('dividendYield', 0)
         if dividend_yield and dividend_yield > 0:
             insights.append(f"💰 **דיבידנד:** תשואת דיבידנד של {dividend_yield*100:.2f}%.")
         
-        # צמיחה
         revenue_growth = info.get('revenueGrowth', None)
         if revenue_growth:
             if revenue_growth > 0.2:
@@ -391,12 +406,10 @@ def analyze_fundamentals(info):
     except Exception as e:
         insights.append(f"⚠️ **שגיאה בניתוח פונדמנטלי:** {str(e)}")
     
-    # אם אין תובנות, נוסיף הודעה כללית
     if not insights:
         insights.append("ℹ️ **מידע פונדמנטלי:** אין מספיק נתונים לניתוח מעמיק.")
     
     return insights
-
 
 # ---------- פונקציות יצוא ----------
 def to_excel(df):
@@ -404,47 +417,45 @@ def to_excel(df):
     ממיר DataFrame לקובץ Excel
     """
     buffer = io.BytesIO()
-    
-    # יצירת Excel writer
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Portfolio')
-    
     buffer.seek(0)
     return buffer
-
 
 # ----------------------------------------------------------------------
 # 3️⃣ הגדרות sidebar
 # ----------------------------------------------------------------------
 with st.sidebar:
+    st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
     st.image("https://cdn-icons-png.flaticon.com/512/3124/3124975.png", width=100)
-    st.title("⚙️ הגדרות")
+    st.markdown("</div>", unsafe_allow_html=True)
     
-    # בחירת סוג ממוצע נע
+    st.title("⚙️ הגדרות מערכת")
+    
+    st.markdown("### 📈 סוג ניתוח")
     ma_type = st.selectbox(
-        "סוג ניתוח טכני",
+        "בחר סוג ממוצעים נעים",
         ["ממוצעים קצרי טווח (9, 20, 50)", "ממוצעים ארוכי טווח (100, 150, 200)"],
-        help="בחר את סוגי הממוצעים הנעים שיוצגו בגרף"
+        help="ממוצעים קצרים טובים לסחר יומי, ארוכים טובים להשקעה ארוכה"
     )
     
-    # הגדרת נראות אינדיקטורים
-    st.markdown("### 📊 אינדיקטורים")
-    show_rsi = st.checkbox("הצג RSI", value=True)
-    show_macd = st.checkbox("הצג MACD", value=True)
-    show_bb = st.checkbox("הצג Bollinger Bands", value=True)
+    st.markdown("### 📊 אינדיקטורים טכניים")
+    show_rsi = st.checkbox("הצג מדד חוזק יחסי (RSI)", value=True)
+    show_macd = st.checkbox("הצג מדד התבדלות ממוצעים (MACD)", value=True)
+    show_bb = st.checkbox("הצג רצועות בולינגר", value=True)
     
-    # ערכי ברירת מחדל
     st.markdown("---")
-    st.markdown("### 📌 עזרה")
-    st.info("""
-    **טיפים:**
-    1. הזן סימול מנייה באנגלית (AAPL, TSLA, GOOGL)
-    2. לחץ 'הוסף פוזיציה' לשמירת עסקאות
-    3. הורד דו"ח בפורמט CSV/Excel
-    """)
     
-    # ניקוי נתונים
-    if st.button("🧹 נקה כל הנתונים", type="secondary"):
+    st.markdown("### 🆘 עזרה ומידע")
+    with st.expander("📖 מדריך מהיר"):
+        st.info("""
+        1. **הזן סימול מנייה** בשדה למעלה (לדוגמה: AAPL, TSLA)
+        2. **בצע ניתוח** בטאבים השונים
+        3. **הוסף פוזיציות** לניהול תיק ההשקעות שלך
+        4. **הורד דו"חות** בפורמט CSV או Excel
+        """)
+    
+    if st.button("🧹 נקה נתונים", type="secondary", use_container_width=True):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.success("✅ כל הנתונים נוקו!")
@@ -465,7 +476,6 @@ def add_trade(ticker: str, price: float, shares: int = 1):
     trade_id = uuid.uuid4().hex[:8]
     now = datetime.now()
     
-    # שמירה ב-trades dictionary
     st.session_state.trades[trade_id] = {
         "Ticker": ticker,
         "Price": round(price, 2),
@@ -474,7 +484,6 @@ def add_trade(ticker: str, price: float, shares: int = 1):
         "TradeID": trade_id
     }
     
-    # עדכון Portfolio DataFrame
     new_row = {
         "Ticker": ticker,
         "EntryPrice": round(price, 2),
@@ -490,11 +499,7 @@ def add_trade(ticker: str, price: float, shares: int = 1):
 def delete_trade(trade_id: str):
     """מחיקת פוזיציה"""
     if trade_id in st.session_state.trades:
-        # שמור את הטיקר לפני מחיקה
-        ticker = st.session_state.trades[trade_id]["Ticker"]
         del st.session_state.trades[trade_id]
-        
-        # מחיקת שורה מ-Portfolio
         st.session_state.portfolio = st.session_state.portfolio[
             st.session_state.portfolio["TradeID"] != trade_id
         ]
@@ -502,36 +507,34 @@ def delete_trade(trade_id: str):
     return False
 
 # ----------------------------------------------------------------------
-# 5️⃣ UI – כותרת ראשית
+# 5️⃣ כותרת ראשית
 # ----------------------------------------------------------------------
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.image("https://cdn-icons-png.flaticon.com/512/3124/3124975.png", width=80)
-    st.title("📈 התיק החכם")
-    st.caption("כלים לניתוח, מעקב ו-journaling של מניות – בעברית")
+st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+st.markdown("## 📈 **התיק החכם**")
+st.markdown("### *ניהול תיק מניות וניתוח טכני בעברית*")
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
 # 6️⃣ הזנת סימול מנייה
 # ----------------------------------------------------------------------
-col_left, col_center, col_right = st.columns([1, 3, 1])
-with col_center:
+st.markdown("---")
+col_input1, col_input2, col_input3 = st.columns([1, 3, 1])
+with col_input2:
     ticker_input = st.text_input(
-        "הזן סימול מנייה (למשל TSLA, AAPL, GOOGL)",
+        "**הזן סימול מנייה (לדוגמה: AAPL, TSLA, GOOGL)**",
         value="AAPL",
-        help="יש להזין סימול באנגלית. דוגמאות: TSLA, AAPL, MSFT, GOOGL"
+        help="יש להזין סימול מנייה באנגלית בלבד"
     ).upper().strip()
 
 # ----------------------------------------------------------------------
 # 7️⃣ טעינת נתונים וניתוח
 # ----------------------------------------------------------------------
 if ticker_input:
-    with st.spinner(f"📥 מוריד נתונים עבור {ticker_input}..."):
+    with st.spinner(f"📥 טוען נתונים עבור {ticker_input}..."):
         df_price, stock_info, full_name = load_stock_data(ticker_input)
     
     if df_price is None or df_price.empty:
         st.error(f"❌ לא נמצאו נתונים עבור **{ticker_input}**. בדוק שהסימול תקין.")
-        
-        # הצעה לסימולים נפוצים
         st.info("""
         **טיפ:** נסה אחד מהסימולים הבאים:
         - AAPL (אפל)
@@ -539,215 +542,223 @@ if ticker_input:
         - GOOGL (גוגל)
         - MSFT (מיקרוסופט)
         - AMZN (אמזון)
-        - META (מטא)
-        - NVDA (אנווידיה)
         """)
         st.stop()
     
-    # כותרת עם שם החברה
     company_name = full_name if full_name != ticker_input else ticker_input
-    st.subheader(f"🔍 ניתוח מניית **{company_name}** ({ticker_input})")
+    st.markdown(f"<h2 style='text-align: center; color: #2c3e50;'>🔍 ניתוח מניית <b>{company_name}</b> ({ticker_input})</h2>", unsafe_allow_html=True)
     
     # יצירת טאבים
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 ניתוח טכני", "🏢 נתונים פונדמנטליים", "💼 ניהול פורטפוליו", "📓 יומן פוזיציות"]
-    )
+    tab_names = ["📊 ניתוח טכני", "🏢 נתוני חברה", "💼 הוספת פוזיציה", "📓 פוזיציות שלי"]
+    tab1, tab2, tab3, tab4 = st.tabs(tab_names)
     
-    # --------------------------------------------------------------
+    # ==============================================================
     # טאב 1: ניתוח טכני
-    # --------------------------------------------------------------
+    # ==============================================================
     with tab1:
-        # חישוב אינדיקטורים
         try:
             df_with_indicators, periods = calculate_all_indicators(df_price.copy(), ma_type)
-        except Exception as e:
-            st.error(f"❌ שגיאה בחישוב אינדיקטורים: {e}")
-            st.info("נסה להזין סימול מנייה שונה")
-            st.stop()
-        
-        # גרף מחיר עם ממוצעים נעים
-        fig_price = go.Figure()
-        
-        # הוספת קו מחיר
-        fig_price.add_trace(go.Scatter(
-            x=df_with_indicators.index,
-            y=df_with_indicators["Close"],
-            name="מחיר סגור",
-            mode="lines",
-            line=dict(color="#0066CC", width=2)
-        ))
-        
-        # הוספת ממוצעים נעים
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
-        for idx, period in enumerate(periods):
+            
+            # גרף מחיר עם ממוצעים נעים
+            fig_price = go.Figure()
+            
             fig_price.add_trace(go.Scatter(
                 x=df_with_indicators.index,
-                y=df_with_indicators[f'SMA_{period}'],
-                name=f'SMA {period}',
+                y=df_with_indicators["Close"],
+                name="מחיר סגור",
                 mode="lines",
-                line=dict(color=colors[idx % len(colors)], width=1.5, dash='dash')
+                line=dict(color="#3498db", width=2.5)
             ))
-        
-        # Bollinger Bands אם נבחר
-        if show_bb and 'BB_Upper' in df_with_indicators.columns:
-            fig_price.add_trace(go.Scatter(
-                x=df_with_indicators.index,
-                y=df_with_indicators['BB_Upper'],
-                name='Bollinger Upper',
-                line=dict(color='rgba(255, 107, 107, 0.5)', width=1),
-                showlegend=False
+            
+            colors = ['#e74c3c', '#2ecc71', '#f39c12']
+            for idx, period in enumerate(periods):
+                fig_price.add_trace(go.Scatter(
+                    x=df_with_indicators.index,
+                    y=df_with_indicators[f'SMA_{period}'],
+                    name=f'ממוצע נע {period}',
+                    mode="lines",
+                    line=dict(color=colors[idx % len(colors)], width=1.5, dash='dash')
+                ))
+            
+            if show_bb and 'BB_Upper' in df_with_indicators.columns:
+                fig_price.add_trace(go.Scatter(
+                    x=df_with_indicators.index,
+                    y=df_with_indicators['BB_Upper'],
+                    name='רצועה עליונה',
+                    line=dict(color='rgba(231, 76, 60, 0.4)', width=1),
+                    showlegend=False
+                ))
+                fig_price.add_trace(go.Scatter(
+                    x=df_with_indicators.index,
+                    y=df_with_indicators['BB_Lower'],
+                    name='רצועה תחתונה',
+                    line=dict(color='rgba(231, 76, 60, 0.4)', width=1),
+                    fill='tonexty',
+                    fillcolor='rgba(231, 76, 60, 0.1)',
+                    showlegend=False
+                ))
+            
+            fig_price.update_layout(
+                height=500,
+                title="גרף מחירים עם אינדיקטורים טכניים",
+                xaxis_title="תאריך",
+                yaxis_title="מחיר (USD)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                template="plotly_white",
+                hovermode='x unified',
+                font=dict(family="Arial, sans-serif", size=12)
+            )
+            
+            st.plotly_chart(fig_price, use_container_width=True)
+            
+            # תצוגת אינדיקטורים
+            col_ind1, col_ind2, col_ind3 = st.columns(3)
+            
+            with col_ind1:
+                if show_rsi and 'RSI' in df_with_indicators.columns:
+                    st.markdown("### 📊 מדד חוזק יחסי")
+                    last_rsi = df_with_indicators['RSI'].iloc[-1]
+                    rsi_color = "#e74c3c" if last_rsi > 70 else "#27ae60" if last_rsi < 30 else "#3498db"
+                    st.markdown(f"<h1 style='color: {rsi_color}; text-align: center;'>{last_rsi:.1f}</h1>", unsafe_allow_html=True)
+                    st.progress(min(max(last_rsi / 100, 0), 1))
+                    if last_rsi > 70:
+                        st.warning("🚨 קניית יתר - שקול מכירה")
+                    elif last_rsi < 30:
+                        st.success("✅ מכירת יתר - הזדמנות קנייה")
+                    else:
+                        st.info("⚖️ בטווח נורמלי")
+            
+            with col_ind2:
+                if show_macd and 'MACD' in df_with_indicators.columns:
+                    st.markdown("### 📈 מדד התבדלות ממוצעים")
+                    last_macd = df_with_indicators['MACD'].iloc[-1]
+                    last_signal = df_with_indicators['MACD_Signal'].iloc[-1]
+                    diff = last_macd - last_signal
+                    st.metric("ערך נוכחי", f"{last_macd:.4f}", 
+                             f"{diff:+.4f} מהסיגנל")
+                    if last_macd > last_signal:
+                        st.success("📈 מגמה חיובית")
+                    else:
+                        st.error("📉 מגמה שלילית")
+            
+            with col_ind3:
+                last_row = df_with_indicators.iloc[-1]
+                score, recommendation, color = calculate_final_score(last_row, periods)
+                st.markdown("### ⭐ ציון טכני")
+                st.markdown(f"<h1 style='color: {color}; text-align: center;'>{score}/100</h1>", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color: {color}; text-align: center;'>{recommendation}</h3>", unsafe_allow_html=True)
+            
+            # פרשנות חכמה
+            st.markdown("### 🧠 פרשנות טכנית")
+            analysis = get_smart_analysis(df_with_indicators, periods)
+            for item in analysis:
+                st.markdown(f"- {item}")
+            
+            # גרף נפח
+            st.markdown("### 📦 נפח מסחר")
+            fig_volume = go.Figure()
+            fig_volume.add_trace(go.Bar(
+                x=df_price.index,
+                y=df_price['Volume'],
+                name="נפח",
+                marker_color='#3498db',
+                opacity=0.7
             ))
-            fig_price.add_trace(go.Scatter(
-                x=df_with_indicators.index,
-                y=df_with_indicators['BB_Lower'],
-                name='Bollinger Lower',
-                line=dict(color='rgba(255, 107, 107, 0.5)', width=1),
-                fill='tonexty',
-                fillcolor='rgba(255, 107, 107, 0.1)',
-                showlegend=False
-            ))
-        
-        # עדכון עיצוב גרף
-        fig_price.update_layout(
-            height=500,
-            title="גרף מחירים עם ממוצעים נעים",
-            xaxis_title="תאריך",
-            yaxis_title="מחיר (USD)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            template="plotly_white",
-            hovermode='x unified'
-        )
-        
-        st.plotly_chart(fig_price, use_container_width=True)
-        
-        # תצוגת אינדיקטורים נוספים בעמודות
-        col_ind1, col_ind2, col_ind3 = st.columns(3)
-        
-        with col_ind1:
-            if show_rsi and 'RSI' in df_with_indicators.columns:
-                st.markdown("### 📊 RSI")
-                last_rsi = df_with_indicators['RSI'].iloc[-1]
-                rsi_color = "red" if last_rsi > 70 else "green" if last_rsi < 30 else "gray"
-                st.markdown(f"<h2 style='color: {rsi_color}; text-align: center;'>{last_rsi:.1f}</h2>", unsafe_allow_html=True)
-                st.progress(min(max(last_rsi / 100, 0), 1))
-                if last_rsi > 70:
-                    st.warning("🚨 קניית יתר")
-                elif last_rsi < 30:
-                    st.success("✅ מכירת יתר - הזדמנות")
-                else:
-                    st.info("⚖️ בטווח נורמלי")
-        
-        with col_ind2:
-            if show_macd and 'MACD' in df_with_indicators.columns:
-                st.markdown("### 📈 MACD")
-                last_macd = df_with_indicators['MACD'].iloc[-1]
-                last_signal = df_with_indicators['MACD_Signal'].iloc[-1]
-                st.metric("MACD", f"{last_macd:.4f}", 
-                         f"{(last_macd - last_signal):.4f} מהסיגנל")
-                if last_macd > last_signal:
-                    st.success("📈 מגמה חיובית")
-                else:
-                    st.error("📉 מגמה שלילית")
-        
-        with col_ind3:
-            # חישוב ציון טכני
-            last_row = df_with_indicators.iloc[-1]
-            score, recommendation, color = calculate_final_score(last_row, periods)
-            st.markdown("### ⭐ ציון טכני")
-            st.markdown(f"<h1 style='color: {color}; text-align: center;'>{score}/100</h1>", unsafe_allow_html=True)
-            st.markdown(f"<h3 style='color: {color}; text-align: center;'>{recommendation}</h3>", unsafe_allow_html=True)
-        
-        # פרשנות חכמה
-        st.markdown("### 🧠 פרשנות טכנית")
-        analysis = get_smart_analysis(df_with_indicators, periods)
-        for item in analysis:
-            st.markdown(f"- {item}")
-        
-        # גרף נפח
-        st.markdown("### 📦 נפח מסחר")
-        fig_volume = go.Figure()
-        fig_volume.add_trace(go.Bar(
-            x=df_price.index,
-            y=df_price['Volume'],
-            name="נפח",
-            marker_color='#A0C3D2'
-        ))
-        fig_volume.update_layout(
-            height=300,
-            xaxis_title="תאריך",
-            yaxis_title="נפח",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig_volume, use_container_width=True)
+            fig_volume.update_layout(
+                height=300,
+                xaxis_title="תאריך",
+                yaxis_title="נפח מסחר",
+                template="plotly_white"
+            )
+            st.plotly_chart(fig_volume, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"❌ שגיאה בניתוח טכני: {str(e)}")
     
-    # --------------------------------------------------------------
-    # טאב 2: נתונים פונדמנטליים
-    # --------------------------------------------------------------
+    # ==============================================================
+    # טאב 2: נתוני חברה
+    # ==============================================================
     with tab2:
         if stock_info:
             col_info1, col_info2 = st.columns([2, 1])
             
             with col_info1:
                 st.markdown("### 🏢 פרטי החברה")
-                info_data = {
-                    "שם החברה": stock_info.get('longName', 'לא זמין'),
-                    "ענף": stock_info.get('industry', 'לא זמין'),
-                    "סקטור": stock_info.get('sector', 'לא זמין'),
-                    "שוק": stock_info.get('exchange', 'לא זמין'),
-                    "מדינה": stock_info.get('country', 'לא זמין'),
-                    "מטבע": stock_info.get('currency', 'USD'),
-                    "אתר": stock_info.get('website', 'לא זמין')
+                
+                company_details = {
+                    'שם החברה': stock_info.get('longName', 'לא זמין'),
+                    'תחום עיסוק': stock_info.get('industry', 'לא זמין'),
+                    'סקטור': stock_info.get('sector', 'לא זמין'),
+                    'בורסה': stock_info.get('exchange', 'לא זמין'),
+                    'מדינה': stock_info.get('country', 'לא זמין'),
+                    'מטבע': stock_info.get('currency', 'USD'),
+                    'אתר אינטרנט': stock_info.get('website', 'לא זמין')
                 }
                 
-                for key, value in info_data.items():
-                    st.markdown(f"**{key}:** {value}")
+                for key, value in company_details.items():
+                    if value != 'לא זמין':
+                        st.markdown(f"**{key}:** {value}")
                 
                 st.markdown("---")
                 st.markdown("### 📖 תיאור החברה")
                 business_summary = stock_info.get('longBusinessSummary', 'אין תיאור זמין.')
-                if len(business_summary) > 500:
-                    st.write(business_summary[:500] + "...")
+                if business_summary:
+                    if len(business_summary) > 500:
+                        st.write(business_summary[:500] + "...")
+                    else:
+                        st.write(business_summary)
                 else:
-                    st.write(business_summary)
+                    st.info("אין תיאור חברה זמין")
             
             with col_info2:
-                st.markdown("### 💰 מדדים פיננסיים")
+                st.markdown("### 📊 נתונים שוטפים")
                 
-                current_price = df_price['Close'].iloc[-1]
+                current_price = df_price['Close'].iloc[-1] if len(df_price) > 0 else 0
                 previous_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
-                daily_change = ((current_price - previous_close) / previous_close) * 100
+                daily_change_pct = ((current_price - previous_close) / previous_close * 100) if previous_close > 0 else 0
                 
                 st.metric("מחיר נוכחי", f"${current_price:.2f}")
-                st.metric("שינוי יומי", f"{daily_change:+.2f}%")
-                st.metric("מחיר פתיחה", f"${df_price['Open'].iloc[-1]:.2f}")
-                st.metric("גבוה יומי", f"${df_price['High'].iloc[-1]:.2f}")
-                st.metric("נמוך יומי", f"${df_price['Low'].iloc[-1]:.2f}")
+                st.metric("שינוי יומי", f"{daily_change_pct:+.2f}%")
+                st.metric("מחיר פתיחה", f"${df_price['Open'].iloc[-1]:.2f}" if len(df_price) > 0 else "$0.00")
+                st.metric("גבוה יומי", f"${df_price['High'].iloc[-1]:.2f}" if len(df_price) > 0 else "$0.00")
+                st.metric("נמוך יומי", f"${df_price['Low'].iloc[-1]:.2f}" if len(df_price) > 0 else "$0.00")
+                st.metric("נפח מסחר", f"{df_price['Volume'].iloc[-1]:,}" if len(df_price) > 0 else "0")
             
-            # פרשנות פונדמנטלית
+            # ניתוח פונדמנטלי
             st.markdown("### 🎯 ניתוח פונדמנטלי")
             fundamental_insights = analyze_fundamentals(stock_info)
             for insight in fundamental_insights:
                 st.markdown(f"- {insight}")
         
         else:
-            st.warning("⚠️ לא הצלחנו לקבל מידע פונדמנטלי מלא. הגרף הטכני עדיין זמין.")
+            st.warning("⚠️ לא הצלחנו לקבל מידע על החברה. נתוני המחיר זמינים בטאב ניתוח טכני.")
     
-    # --------------------------------------------------------------
-    # טאב 3: ניהול פורטפוליו
-    # --------------------------------------------------------------
+    # ==============================================================
+    # טאב 3: הוספת פוזיציה
+    # ==============================================================
     with tab3:
         st.markdown("### 🛒 הוספת פוזיציה חדשה")
         
         col_price, col_shares, col_action = st.columns([2, 2, 1])
         
         with col_price:
-            current_price = df_price['Close'].iloc[-1]
+            current_price = df_price['Close'].iloc[-1] if len(df_price) > 0 else 0
             price_to_save = st.number_input(
                 "מחיר קנייה (USD)",
                 min_value=0.0,
                 value=round(current_price, 2),
                 step=0.01,
-                key="buy_price"
+                key="buy_price_input"
             )
         
-        with
+        with col_shares:
+            shares_to_save = st.number_input(
+                "מספר מניות",
+                min_value=1,
+                step=1,
+                value=100,
+                key="shares_input"
+            )
+        
+        with col_action:
+            st.markdown("<br>", unsafe_allow
