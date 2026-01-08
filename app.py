@@ -734,31 +734,182 @@ if ticker_input:
             st.warning("⚠️ לא הצלחנו לקבל מידע על החברה. נתוני המחיר זמינים בטאב ניתוח טכני.")
     
     # ==============================================================
-    # טאב 3: הוספת פוזיציה
-    # ==============================================================
-    with tab3:
-        st.markdown("### 🛒 הוספת פוזיציה חדשה")
+# טאב 3: הוספת פוזיציה
+# ==============================================================
+with tab3:
+    st.markdown("### 🛒 הוספת פוזיציה חדשה")
+    
+    col_price, col_shares, col_action = st.columns([2, 2, 1])
+    
+    with col_price:
+        current_price = df_price['Close'].iloc[-1] if len(df_price) > 0 else 0
+        price_to_save = st.number_input(
+            "מחיר קנייה (USD)",
+            min_value=0.0,
+            value=round(current_price, 2),
+            step=0.01,
+            key="buy_price_input"
+        )
+    
+    with col_shares:
+        shares_to_save = st.number_input(
+            "מספר מניות",
+            min_value=1,
+            step=1,
+            value=100,
+            key="shares_input"
+        )
+    
+    with col_action:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if st.button(f"➕ הוסף {ticker_input}", use_container_width=True, key="add_trade_button"):
+            if price_to_save > 0 and shares_to_save > 0:
+                add_trade(ticker_input, price_to_save, shares_to_save)
+                st.success(f"✅ פוזיציה של {ticker_input} נוספה בהצלחה!")
+                st.rerun()
+            else:
+                st.error("❌ אנא הזן ערכים תקינים")
+    
+    st.markdown("---")
+    st.info(f"💡 מחיר נוכחי: **${current_price:.2f}** | שווי פוזיציה מוצע: **${current_price * shares_to_save:,.2f}**")
+    
+    # תצוגת פוזיציות קיימות של המניה הנוכחית
+    current_ticker_trades = {k: v for k, v in st.session_state.trades.items() if v['Ticker'] == ticker_input}
+    if current_ticker_trades:
+        st.markdown("### 📋 פוזיציות קיימות של מניה זו")
+        trades_df = pd.DataFrame.from_dict(current_ticker_trades, orient='index')
+        st.dataframe(
+            trades_df[['Ticker', 'Price', 'Shares', 'Date']].style.format({
+                'Price': '${:,.2f}'
+            }),
+            use_container_width=True
+        )
+
+# ==============================================================
+# טאב 4: פוזיציות שלי
+# ==============================================================
+with tab4:
+    st.markdown("### 📓 יומן פוזיציות")
+    
+    if not st.session_state.trades:
+        st.info("📝 עדיין לא הוספת פוזיציות. עבור לטאב 'הוספת פוזיציה' כדי להתחיל.")
+    else:
+        # יצירת DataFrame מהפוזיציות
+        trades_df = pd.DataFrame.from_dict(st.session_state.trades, orient='index')
         
-        col_price, col_shares, col_action = st.columns([2, 2, 1])
+        # חישוב ערכים נוכחיים
+        current_values = []
+        for _, trade in trades_df.iterrows():
+            ticker = trade['Ticker']
+            try:
+                df_tmp, _, _ = load_stock_data(ticker)
+                if df_tmp is not None and not df_tmp.empty:
+                    current_price = df_tmp['Close'].iloc[-1]
+                    current_value = current_price * trade['Shares']
+                    profit_loss = current_value - (trade['Price'] * trade['Shares'])
+                    profit_loss_pct = (profit_loss / (trade['Price'] * trade['Shares'])) * 100 if (trade['Price'] * trade['Shares']) > 0 else 0
+                    
+                    current_values.append({
+                        'מחיר נוכחי': current_price,
+                        'שווי נוכחי': current_value,
+                        'רווח/הפסד ($)': profit_loss,
+                        'רווח/הפסד (%)': profit_loss_pct
+                    })
+                else:
+                    current_values.append({
+                        'מחיר נוכחי': None,
+                        'שווי נוכחי': None,
+                        'רווח/הפסד ($)': None,
+                        'רווח/הפסד (%)': None
+                    })
+            except:
+                current_values.append({
+                    'מחיר נוכחי': None,
+                    'שווי נוכחי': None,
+                    'רווח/הפסד ($)': None,
+                    'רווח/הפסד (%)': None
+                })
         
-        with col_price:
-            current_price = df_price['Close'].iloc[-1] if len(df_price) > 0 else 0
-            price_to_save = st.number_input(
-                "מחיר קנייה (USD)",
-                min_value=0.0,
-                value=round(current_price, 2),
-                step=0.01,
-                key="buy_price_input"
+        # הוספת עמודות חדשות
+        if current_values:
+            current_df = pd.DataFrame(current_values)
+            display_df = pd.concat([trades_df, current_df], axis=1)
+            
+            # הסדר עמודות
+            display_df = display_df[['Ticker', 'Price', 'Shares', 'Date', 
+                                    'מחיר נוכחי', 'שווי נוכחי', 'רווח/הפסד ($)', 'רווח/הפסד (%)']]
+            
+            # תצוגת טבלה מעוצבת
+            st.dataframe(
+                display_df.style.format({
+                    'Price': '${:,.2f}',
+                    'מחיר נוכחי': '${:,.2f}',
+                    'שווי נוכחי': '${:,.2f}',
+                    'רווח/הפסד ($)': '${:+,.2f}',
+                    'רווח/הפסד (%)': '{:+.2f}%'
+                }, na_rep="ממתין...").apply(
+                    lambda x: ['background-color: #ffe6e6' if isinstance(v, (int, float)) and v < 0 
+                              else 'background-color: #e6ffe6' if isinstance(v, (int, float)) and v > 0 
+                              else '' for v in x],
+                    subset=['רווח/הפסד ($)', 'רווח/הפסד (%)']
+                ),
+                use_container_width=True,
+                height=400
             )
         
-        with col_shares:
-            shares_to_save = st.number_input(
-                "מספר מניות",
-                min_value=1,
-                step=1,
-                value=100,
-                key="shares_input"
-            )
+        # כפתורי פעולה
+        col_actions1, col_actions2, col_actions3 = st.columns(3)
         
-        with col_action:
-            st.markdown("<br>", unsafe_allow
+        with col_actions1:
+            if st.session_state.trades:
+                if st.button("🗑️ מחק פוזיציה אחרונה", use_container_width=True, key="delete_last_button"):
+                    last_trade_id = list(st.session_state.trades.keys())[-1]
+                    delete_trade(last_trade_id)
+                    st.success("✅ הפוזיציה האחרונה נמחקה!")
+                    st.rerun()
+        
+        with col_actions2:
+            if st.session_state.trades:
+                csv_buffer = io.StringIO()
+                trades_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 הורד CSV",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"פוזיציות_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_csv_button"
+                )
+        
+        with col_actions3:
+            if st.session_state.trades:
+                excel_buffer = to_excel(trades_df)
+                st.download_button(
+                    label="📊 הורד Excel",
+                    data=excel_buffer,
+                    file_name=f"פוזיציות_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="download_excel_button"
+                )
+
+# ----------------------------------------------------------------------
+# 8️⃣ Footer
+# ----------------------------------------------------------------------
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; margin-top: 20px;">
+        <h4 style="color: #2c3e50;">💡 אודות "התיק החכם"</h4>
+        <p style="color: #7f8c8d; margin-bottom: 10px;">מערכת לניהול תיק מניות וניתוח טכני בעברית</p>
+        <div style="font-size: 0.9rem; color: #95a5a6;">
+            <p>© 2024 התיק החכם | כל הזכויות שמורות</p>
+            <p style="font-size: 0.8rem; color: #bdc3c7;">
+                ⚠️ הערה: האפליקציה נועדה לסיוע בניתוח בלבד ואינה מהווה ייעוץ השקעות.<br>
+                יש לבצע מחקר עצמאי לפני כל החלטת השקעה.
+            </p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
