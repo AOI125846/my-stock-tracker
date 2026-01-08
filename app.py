@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import io
+import requests
 import streamlit.components.v1 as components
 from core.indicators import calculate_all_indicators, get_smart_analysis, calculate_final_score, analyze_fundamentals
 import uuid
@@ -9,57 +10,71 @@ import uuid
 # --- הגדרות דף ---
 st.set_page_config(page_title="התיק החכם", layout="wide")
 
-# --- עיצוב CSS לרקע ולנראות ---
+# --- עיצוב CSS ---
 st.markdown("""
     <style>
-    /* רקע לכל האפליקציה */
     [data-testid="stAppViewContainer"] {
         background-image: url("https://images.unsplash.com/photo-1642543492481-44e81e3914a7?q=80&w=2070&auto=format&fit=crop");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
     }
-    
-    /* רקע חצי שקוף לאזור התוכן כדי שהטקסט יהיה קריא */
     [data-testid="stHeader"], [data-testid="stToolbar"] {
         background-color: rgba(0,0,0,0);
     }
-    
     .main .block-container {
         background-color: rgba(255, 255, 255, 0.95);
         padding: 2rem;
         border-radius: 15px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        margin-top: 2rem;
         max-width: 1000px;
     }
-
-    /* יישור לימין */
     .stTextInput > label { direction: rtl; text-align: right; font-weight: bold; }
-    .stTextInput input { direction: ltr; text-align: center; }
     h1, h2, h3, p, div { direction: rtl; text-align: right; }
-    
-    /* הסתרת אייקון מסך מלא של הגרף שלא יפריע */
     iframe { display: block; margin: 0 auto; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- פונקציות עזר ---
+# --- פונקציות ליבה ---
 
-# פונקציה אמינה יותר למשיכת נתונים
-def get_data(ticker_symbol):
+# פונקציה משופרת לעקיפת חסימות
+def get_data_robust(ticker_symbol):
+    ticker_symbol = ticker_symbol.strip().upper()
+    
+    # יצירת סשן שמתחזה לדפדפן כרום רגיל
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+
     try:
-        stock = yf.Ticker(ticker_symbol)
-        # משיכת היסטוריה של שנתיים
+        # ניסיון 1: שימוש באובייקט Ticker עם הסשן המיוחד
+        stock = yf.Ticker(ticker_symbol, session=session)
         df = stock.history(period="2y")
         
+        # אם חזר ריק, ננסה שיטה ישנה (download)
         if df.empty:
-            return None, None, None
+            df = yf.download(ticker_symbol, period="2y", progress=False, session=session)
+        
+        # תיקון מבנה עמודות (MultiIndex) שקורה בגרסאות חדשות
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
             
-        info = stock.info
-        name = info.get('longName', ticker_symbol)
+        if df.empty or len(df) < 5:
+            return None, None, None
+
+        # נסיון למשוך מידע על החברה, עם הגנה מקריסה
+        try:
+            info = stock.info
+            name = info.get('longName', ticker_symbol)
+        except:
+            info = {}
+            name = ticker_symbol
+
         return df, info, name
-    except:
+
+    except Exception as e:
+        print(f"Error fetching {ticker_symbol}: {e}")
         return None, None, None
 
 def to_excel(trades_dict):
@@ -74,7 +89,6 @@ def to_excel(trades_dict):
     return output.getvalue()
 
 def render_tradingview_widget(symbol):
-    # וידג'ט נקי ללא התקנות חיצוניות
     html_code = f"""
     <div class="tradingview-widget-container">
       <div id="tradingview_chart"></div>
@@ -94,30 +108,26 @@ def render_tradingview_widget(symbol):
     """
     components.html(html_code, height=500)
 
-# --- אתחול זיכרון (Session) ---
 if 'trades' not in st.session_state:
     st.session_state.trades = {}
 
-# --- גוף האתר ---
+# --- ממשק משתמש ---
 
 st.title("📈 התיק החכם")
-st.markdown("### מערכת מקצועית לניתוח ומעקב אחר מניות")
+st.markdown("### מערכת מקצועית לניתוח ומעקב")
 
-# שורת חיפוש מעוצבת וקטנה יותר
-col_spacer1, col_input, col_spacer2 = st.columns([1, 2, 1])
-with col_input:
-    # ברירת מחדל AAPL במקום MARA
-    ticker_input = st.text_input("הזן סימול מניה (לדוגמא AAPL):", "AAPL").upper()
+# שורת חיפוש
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    ticker_input = st.text_input("הזן סימול מניה (לדוגמא AAPL, MARA):", "AAPL").upper()
 
 if ticker_input:
-    # שימוש בפונקציה החדשה והאמינה
-    df, info, full_name = get_data(ticker_input)
+    df, info, full_name = get_data_robust(ticker_input)
     
     if df is not None:
         st.markdown("---")
         st.header(f"{full_name} ({ticker_input})")
         
-        # טאבים
         tab1, tab2, tab3, tab4 = st.tabs(["📊 גרף חי", "🧠 ניתוח חכם", "🏢 נתוני חברה", "📓 יומן אישי"])
         
         with tab1:
@@ -125,9 +135,7 @@ if ticker_input:
             
         with tab2:
             try:
-                # חישוב אינדיקטורים
-                # וודא שפונקציות העזר ב-core/indicators.py קיימות ומותאמות
-                # כאן נשתמש בחישוב בסיסי אם אין קובץ חיצוני, או נקרא לפונקציה שלך
+                # חישוב וניתוח טכני
                 df_calc, periods = calculate_all_indicators(df, "סווינג") 
                 last_row = df_calc.iloc[-1]
                 score, txt, color = calculate_final_score(last_row, periods)
@@ -139,25 +147,27 @@ if ticker_input:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                analysis = get_smart_analysis(df_calc, periods)
-                for item in analysis:
+                for item in get_smart_analysis(df_calc, periods):
                     st.info(item)
             except Exception as e:
-                st.warning("לא ניתן היה לחשב ניתוח טכני מלא עקב חוסר בנתונים היסטוריים מספקים.")
+                st.error("לא ניתן לחשב אינדיקטורים טכניים בשל מחסור בנתונים היסטוריים.")
         
         with tab3:
             if info:
-                # נתונים פונדמנטליים בסיסיים
                 c1, c2, c3 = st.columns(3)
-                c1.metric("שווי שוק", f"${info.get('marketCap', 0):,}")
-                c2.metric("מכפיל רווח (PE)", info.get('trailingPE', 'N/A'))
-                c3.metric("שינוי 52 שבועות", f"{info.get('52WeekChange', 0)*100:.1f}%")
+                mkt_cap = info.get('marketCap')
+                val_formatted = f"${mkt_cap/1e9:.2f}B" if mkt_cap else "לא זמין"
                 
-                st.write(f"**תחום עיסוק:** {info.get('sector', 'לא ידוע')} | {info.get('industry', '')}")
-                st.write(f"**תיאור:** {info.get('longBusinessSummary', 'אין תיאור זמין.')[:400]}...")
+                c1.metric("שווי שוק", val_formatted)
+                c2.metric("מחיר נוכחי", f"${info.get('currentPrice', df['Close'].iloc[-1]):.2f}")
+                c3.metric("יעד אנליסטים", f"${info.get('targetMeanPrice', 'N/A')}")
+                
+                st.markdown(f"**תחום:** {info.get('industry', 'כללי')}")
+                st.caption(info.get('longBusinessSummary', 'אין תיאור זמין.')[:300] + "...")
+            else:
+                st.warning("מידע פונדמנטלי חסר, אך הגרף מוצג.")
         
         with tab4:
-            # אזור הוספת טרייד
             with st.expander("➕ הוסף עסקה ליומן", expanded=False):
                 col_p, col_q, col_btn = st.columns([2, 2, 1])
                 price_in = col_p.number_input("מחיר קנייה ($)", value=float(df['Close'].iloc[-1]))
@@ -174,23 +184,20 @@ if ticker_input:
                     }
                     st.rerun()
 
-            # כפתור הורדה לאקסל
             if st.session_state.trades:
                 excel_data = to_excel(st.session_state.trades)
-                st.download_button("📥 הורד יומן לאקסל", excel_data, "my_trades.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("📥 הורד לאקסל", excel_data, "my_trades.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
-                st.markdown("### העסקאות שלי")
                 for tid, t in list(st.session_state.trades.items()):
                     with st.container():
-                        cc1, cc2, cc3 = st.columns([3, 1, 0.5])
-                        cc1.write(f"**{t['Ticker']}** | {t['Date']} | כמות: {t['Quantity']} | מחיר: ${t['Price']}")
-                        cc2.caption(t['Status'])
-                        if cc3.button("🗑️", key=tid):
+                        cc1, cc2 = st.columns([4, 1])
+                        cc1.info(f"**{t['Ticker']}** | נרכש ב-${t['Price']} | כמות: {t['Quantity']}")
+                        if cc2.button("מחק", key=tid):
                             del st.session_state.trades[tid]
                             st.rerun()
-                    st.divider()
             else:
-                st.info("היומן שלך ריק כרגע. הוסף עסקה ראשונה!")
+                st.write("אין עסקאות שמורות.")
             
     else:
-        st.error(f"לא הצלחנו למצוא נתונים עבור '{ticker_input}'. נסה לבדוק את האיות.")
+        st.error(f"❌ שגיאת תקשורת עם השרת עבור '{ticker_input}'. נסה שוב בעוד מספר שניות.")
+        
