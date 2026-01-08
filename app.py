@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Streamlit – “התיק החכם” (גרסה מתוקנת ל‑yfinance >= 0.2.40)
+Streamlit – "התיק החכם" (גרסה מתוקנת ומשולבת)
 """
 
 import uuid
@@ -11,10 +11,18 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
+
+# ייבוא מודולים מותאמים
+try:
+    from indicators import calculate_all_indicators, calculate_final_score, get_smart_analysis, analyze_fundamentals
+    from data import load_stock_data
+    from export import to_excel
+except ImportError as e:
+    st.error(f"❌ חסרים מודולים: {e}")
+    st.info("אנא ודא שכל הקבצים (indicators.py, data.py, export.py) נמצאים באותה תיקייה")
+    st.stop()
 
 # ----------------------------------------------------------------------
 # 1️⃣ הגדרות כלליות של העמוד
@@ -30,348 +38,660 @@ st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] {
-        background-image: url("https://images.unsplash.com/photo-1521737604893-d14cc237f11d");
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         background-size: cover;
         background-attachment: fixed;
     }
     .main .block-container {
-        background-color: rgba(255,255,255,0.93);
+        background-color: rgba(255,255,255,0.98);
         padding: 2rem;
         border-radius: 20px;
         margin-top: 2rem;
         direction: rtl;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
     }
-    div.stButton > button { width: 100%; }
-    .stTextInput input { text-align: center; }
+    div.stButton > button {
+        width: 100%;
+        background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 0.75rem;
+        border-radius: 10px;
+        font-weight: bold;
+    }
+    div.stButton > button:hover {
+        background: linear-gradient(45deg, #764ba2 0%, #667eea 100%);
+    }
+    .stTextInput input {
+        text-align: center;
+        border-radius: 10px;
+        border: 2px solid #667eea;
+    }
+    .stSelectbox > div > div {
+        border-radius: 10px;
+        border: 2px solid #667eea;
+    }
+    h1, h2, h3, h4 {
+        color: #333;
+        text-align: center;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ----------------------------------------------------------------------
-# 2️⃣ כלי עזר – Caching (מתוקן)
+# 2️⃣ הגדרות sidebar
 # ----------------------------------------------------------------------
-@st.cache_data(ttl=60 * 10)
-def fetch_stock_data(symbol: str) -> tuple[pd.DataFrame, dict]:
-    """
-    מחזיר DataFrame של מחירי הסגירה + dict עם מידע פונדמנטלי.
-    תואם ל‑yfinance 0.2.40+ (curl_cffi).
-    """
-    # ודא שה‑curl_cffi מותקן – אם לא, נציג הודעה למשתמש
-    try:
-        import curl_cffi  # noqa: F401
-    except Exception:
-        st.error(
-            "❌  חסרה ספריית **curl_cffi** ש‑yfinance זקוקה לה.\n"
-            "התקן אותה עם `pip install curl_cffi` והפעל מחדש את האפליקציה."
-        )
-        raise
-
-    try:
-        # ניסיון ראשוני עם Ticker (ה‑session נוצר אוטומטית)
-        ticker_obj = yf.Ticker(symbol)
-        df = ticker_obj.history(period="1y")
-        info = ticker_obj.info
-        if df.empty:
-            raise ValueError("DataFrame ריק – נעבור ל‑download fallback")
-        return df, info
-    except Exception as e_first:
-        # fallback – download ישירות (עם impersonate כדי לקבל User‑Agent)
-        try:
-            df = yf.download(symbol, period="1y", progress=False, impersonate="chrome")
-            info = yf.Ticker(symbol).info
-            return df, info
-        except Exception as e_second:
-            st.exception(e_second)
-            st.warning(
-                f"⚠️  לא הצלחנו למשוך נתונים עבור **{symbol}**. "
-                "בדוק שהסימול קיים, כתוב באנגלית וללא רווחים."
-            )
-            return None, None
-
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3124/3124975.png", width=100)
+    st.title("⚙️ הגדרות")
+    
+    # בחירת סוג ממוצע נע
+    ma_type = st.selectbox(
+        "סוג ניתוח טכני",
+        ["ממוצעים קצרי טווח (9, 20, 50)", "ממוצעים ארוכי טווח (100, 150, 200)"],
+        help="בחר את סוגי הממוצעים הנעים שיוצגו בגרף"
+    )
+    
+    # הגדרת נראות אינדיקטורים
+    st.markdown("### 📊 אינדיקטורים")
+    show_rsi = st.checkbox("הצג RSI", value=True)
+    show_macd = st.checkbox("הצג MACD", value=True)
+    show_bb = st.checkbox("הצג Bollinger Bands", value=True)
+    
+    # ערכי ברירת מחדל
+    st.markdown("---")
+    st.markdown("### 📌 עזרה")
+    st.info("""
+    **טיפים:**
+    1. הזן סימול מנייה באנגלית (AAPL, TSLA, GOOGL)
+    2. לחץ 'הוסף פוזיציה' לשמירת עסקאות
+    3. הורד דו"ח בפורמט CSV/Excel
+    """)
+    
+    # ניקוי נתונים
+    if st.button("🧹 נקה כל הנתונים", type="secondary"):
+        st.session_state.clear()
+        st.success("✅ כל הנתונים נוקו!")
+        st.rerun()
 
 # ----------------------------------------------------------------------
-# 3️⃣ ניהול Session State – יומן פוזיציות ו‑Portfolio
+# 3️⃣ ניהול Session State
 # ----------------------------------------------------------------------
 if "trades" not in st.session_state:
     st.session_state.trades = {}
 if "portfolio" not in st.session_state:
     st.session_state.portfolio = pd.DataFrame(
-        columns=["Ticker", "EntryPrice", "Shares", "Date"]
+        columns=["Ticker", "EntryPrice", "Shares", "Date", "TradeID"]
     )
 
 def add_trade(ticker: str, price: float, shares: int = 1):
+    """הוספת פוזיציה חדשה"""
     trade_id = uuid.uuid4().hex[:8]
+    now = datetime.now()
+    
+    # שמירה ב-trades dictionary
     st.session_state.trades[trade_id] = {
         "Ticker": ticker,
         "Price": round(price, 2),
         "Shares": shares,
-        "Date": datetime.now().strftime("%Y-%m-%d"),
+        "Date": now.strftime("%Y-%m-%d %H:%M"),
+        "TradeID": trade_id
     }
+    
     # עדכון Portfolio DataFrame
-    new_row = {"Ticker": ticker, "EntryPrice": round(price, 2),
-               "Shares": shares, "Date": datetime.now()}
+    new_row = {
+        "Ticker": ticker,
+        "EntryPrice": round(price, 2),
+        "Shares": shares,
+        "Date": now,
+        "TradeID": trade_id
+    }
     st.session_state.portfolio = pd.concat(
         [st.session_state.portfolio, pd.DataFrame([new_row])],
         ignore_index=True,
     )
 
 def delete_trade(trade_id: str):
+    """מחיקת פוזיציה"""
     if trade_id in st.session_state.trades:
+        # שמור את הטיקר לפני מחיקה
+        ticker = st.session_state.trades[trade_id]["Ticker"]
         del st.session_state.trades[trade_id]
-    # מחיקת שורה מ‑Portfolio לפי מזהה (Ticker + תאריך)
-    # כאן מניחים שכל פוזיציה נרשמה פעם אחת בלבד
-    mask = st.session_state.portfolio["Ticker"] == st.session_state.trades.get(trade_id, {}).get("Ticker")
-    st.session_state.portfolio = st.session_state.portfolio[~mask]
+        
+        # מחיקת שורה מ-Portfolio
+        st.session_state.portfolio = st.session_state.portfolio[
+            st.session_state.portfolio["TradeID"] != trade_id
+        ]
+        return True
+    return False
 
 # ----------------------------------------------------------------------
-# 4️⃣ UI – כותרת ראשית והזנת סימול
+# 4️⃣ UI – כותרת ראשית
 # ----------------------------------------------------------------------
-st.title("📈 התיק החכם")
-st.caption("כלים לניתוח, מעקב ו‑journalling של מניות – בעברית, עם UI רספונסיבי")
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.image("https://cdn-icons-png.flaticon.com/512/3124/3124975.png", width=80)
+    st.title("📈 התיק החכם")
+    st.caption("כלים לניתוח, מעקב ו-journaling של מניות – בעברית")
 
-col_left, col_center, col_right = st.columns([1, 2, 1])
+# ----------------------------------------------------------------------
+# 5️⃣ הזנת סימול מנייה
+# ----------------------------------------------------------------------
+col_left, col_center, col_right = st.columns([1, 3, 1])
 with col_center:
     ticker_input = st.text_input(
-        "הזן סימול מנייה (למשל TSLA)", value="AAPL",
-        help="הסימול חייב להיות באנגלית"
+        "הזן סימול מנייה (למשל TSLA, AAPL, GOOGL)",
+        value="AAPL",
+        help="יש להזין סימול באנגלית. דוגמאות: TSLA, AAPL, MSFT, GOOGL"
     ).upper().strip()
 
 # ----------------------------------------------------------------------
-# 5️⃣ קבלת נתונים – עם הודעות משוב למשתמש
+# 6️⃣ טעינת נתונים וניתוח
 # ----------------------------------------------------------------------
 if ticker_input:
-    with st.spinner(f"מוריד נתונים עבור {ticker_input}..."):
-        df_price, stock_info = fetch_stock_data(ticker_input)
-
+    with st.spinner(f"📥 מוריד נתונים עבור {ticker_input}..."):
+        df_price, stock_info, full_name = load_stock_data(ticker_input)
+    
     if df_price is None or df_price.empty:
-        st.error(f"❌  לא נמצאו נתונים עבור **{ticker_input}**.")
+        st.error(f"❌ לא נמצאו נתונים עבור **{ticker_input}**. בדוק שהסימול תקין.")
+        
+        # הצעה לסימולים נפוצים
+        st.info("""
+        **טיפ:** נסה אחד מהסימולים הבאים:
+        - AAPL (אפל)
+        - TSLA (טסלה)
+        - GOOGL (גוגל)
+        - MSFT (מיקרוסופט)
+        - AMZN (אמזון)
+        - META (מטא)
+        - NVDA (אנווידיה)
+        """)
         st.stop()
-
-    st.subheader(f"🔎 ניתוח מניית **{ticker_input}**")
-    tab_chart, tab_info, tab_journal = st.tabs(
-        ["📊 גרף טכני", "🏢 אודות", "📓 יומן אישי"]
+    
+    # כותרת עם שם החברה
+    company_name = full_name if full_name != ticker_input else ticker_input
+    st.subheader(f"🔍 ניתוח מניית **{company_name}** ({ticker_input})")
+    
+    # יצירת טאבים
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 ניתוח טכני", "🏢 נתונים פונדמנטליים", "💼 ניהול פורטפוליו", "📓 יומן פוזיציות", "📈 סיכום תיק"]
     )
-
+    
     # --------------------------------------------------------------
-    # 6.1️⃣ גרף טכני – Plotly + fallback ל‑TradingView
+    # טאב 1: ניתוח טכני
     # --------------------------------------------------------------
-    with tab_chart:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df_price.index,
-            y=df_price["Close"],
+    with tab1:
+        # חישוב אינדיקטורים
+        df_with_indicators, periods = calculate_all_indicators(df_price.copy(), ma_type)
+        
+        # גרף מחיר עם ממוצעים נעים
+        fig_price = go.Figure()
+        
+        # הוספת קו מחיר
+        fig_price.add_trace(go.Scatter(
+            x=df_with_indicators.index,
+            y=df_with_indicators["Close"],
             name="מחיר סגור",
             mode="lines",
-            line=dict(color="#0066CC")
+            line=dict(color="#0066CC", width=2)
         ))
-        fig.add_trace(go.Bar(
-            x=df_price.index,
-            y=df_price["Volume"],
-            name="נפח",
-            marker_color="#A0C3D2",
-            opacity=0.4,
-            yaxis="y2"
-        ))
-        fig.update_layout(
+        
+        # הוספת ממוצעים נעים
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']  # צבעים שונים לכל SMA
+        for idx, period in enumerate(periods):
+            fig_price.add_trace(go.Scatter(
+                x=df_with_indicators.index,
+                y=df_with_indicators[f'SMA_{period}'],
+                name=f'SMA {period}',
+                mode="lines",
+                line=dict(color=colors[idx % len(colors)], width=1.5, dash='dash')
+            ))
+        
+        # Bollinger Bands אם נבחר
+        if show_bb and 'BB_Upper' in df_with_indicators.columns:
+            fig_price.add_trace(go.Scatter(
+                x=df_with_indicators.index,
+                y=df_with_indicators['BB_Upper'],
+                name='Bollinger Upper',
+                line=dict(color='rgba(255, 107, 107, 0.5)', width=1),
+                showlegend=True
+            ))
+            fig_price.add_trace(go.Scatter(
+                x=df_with_indicators.index,
+                y=df_with_indicators['BB_Lower'],
+                name='Bollinger Lower',
+                line=dict(color='rgba(255, 107, 107, 0.5)', width=1),
+                fill='tonexty',
+                fillcolor='rgba(255, 107, 107, 0.1)',
+                showlegend=True
+            ))
+        
+        # עדכון עיצוב גרף
+        fig_price.update_layout(
             height=500,
+            title="גרף מחירים עם ממוצעים נעים",
             xaxis_title="תאריך",
             yaxis_title="מחיר (USD)",
-            yaxis2=dict(title="נפח", overlaying="y", side="right", showgrid=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            template="ggplot2",
+            template="plotly_white",
+            hovermode='x unified'
         )
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("תצוגת TradingView (קוד משולב)"):
-            tv_html = f"""
-            <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-            <script type="text/javascript">
-            new TradingView.widget({{
-                "width": "100%",
-                "height": 500,
-                "symbol": "{ticker_input}",
-                "interval": "D",
-                "timezone": "Etc/UTC",
-                "theme": "light",
-                "style": "1",
-                "locale": "he_IL",
-                "toolbar_bg": "#f1f3f6",
-                "hide_side_toolbar": false,
-                "allow_symbol_change": true,
-                "container_id": "tradingview_{ticker_input}"
-            }});
-            </script>
-            <div id="tradingview_{ticker_input}"></div>
-            """
-            components.html(tv_html, height=520)
-
+        
+        st.plotly_chart(fig_price, use_container_width=True)
+        
+        # תצוגת אינדיקטורים נוספים בעמודות
+        col_ind1, col_ind2, col_ind3 = st.columns(3)
+        
+        with col_ind1:
+            if show_rsi and 'RSI' in df_with_indicators.columns:
+                st.markdown("### 📊 RSI")
+                last_rsi = df_with_indicators['RSI'].iloc[-1]
+                rsi_color = "red" if last_rsi > 70 else "green" if last_rsi < 30 else "gray"
+                st.markdown(f"<h2 style='color: {rsi_color}; text-align: center;'>{last_rsi:.1f}</h2>", unsafe_allow_html=True)
+                st.progress(min(max(last_rsi / 100, 0), 1))
+                if last_rsi > 70:
+                    st.warning("🚨 קניית יתר")
+                elif last_rsi < 30:
+                    st.success("✅ מכירת יתר - הזדמנות")
+                else:
+                    st.info("⚖️ בטווח נורמלי")
+        
+        with col_ind2:
+            if show_macd and 'MACD' in df_with_indicators.columns:
+                st.markdown("### 📈 MACD")
+                last_macd = df_with_indicators['MACD'].iloc[-1]
+                last_signal = df_with_indicators['MACD_Signal'].iloc[-1]
+                st.metric("MACD", f"{last_macd:.4f}", 
+                         f"{(last_macd - last_signal):.4f} מהסיגנל")
+                if last_macd > last_signal:
+                    st.success("📈 מגמה חיובית")
+                else:
+                    st.error("📉 מגמה שלילית")
+        
+        with col_ind3:
+            # חישוב ציון טכני
+            last_row = df_with_indicators.iloc[-1]
+            score, recommendation, color = calculate_final_score(last_row, periods)
+            st.markdown("### ⭐ ציון טכני")
+            st.markdown(f"<h1 style='color: {color}; text-align: center;'>{score}/100</h1>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='color: {color}; text-align: center;'>{recommendation}</h3>", unsafe_allow_html=True)
+        
+        # פרשנות חכמה
+        st.markdown("### 🧠 פרשנות טכנית")
+        analysis = get_smart_analysis(df_with_indicators, periods)
+        for item in analysis:
+            st.markdown(f"- {item}")
+        
+        # גרף נפח
+        st.markdown("### 📦 נפח מסחר")
+        fig_volume = go.Figure()
+        fig_volume.add_trace(go.Bar(
+            x=df_price.index,
+            y=df_price['Volume'],
+            name="נפח",
+            marker_color='#A0C3D2'
+        ))
+        fig_volume.update_layout(
+            height=300,
+            xaxis_title="תאריך",
+            yaxis_title="נפח",
+            template="plotly_white"
+        )
+        st.plotly_chart(fig_volume, use_container_width=True)
+    
     # --------------------------------------------------------------
-    # 6.2️⃣ מידע חברה
+    # טאב 2: נתונים פונדמנטליים
     # --------------------------------------------------------------
-    with tab_info:
+    with tab2:
         if stock_info:
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.markdown(f"**שם החברה:** {stock_info.get('longName', ticker_input)}")
-                st.markdown(f"**ענף:** {stock_info.get('industry', 'לא ידוע')}")
-                st.markdown(f"**שוק:** {stock_info.get('exchange', 'לא ידוע')}")
-                st.markdown(f"**מטבע:** {stock_info.get('currency', 'USD')}")
+            col_info1, col_info2 = st.columns([2, 1])
+            
+            with col_info1:
+                st.markdown("### 🏢 פרטי החברה")
+                info_data = {
+                    "שם החברה": stock_info.get('longName', 'לא זמין'),
+                    "ענף": stock_info.get('industry', 'לא זמין'),
+                    "סקטור": stock_info.get('sector', 'לא זמין'),
+                    "שוק": stock_info.get('exchange', 'לא זמין'),
+                    "מדינה": stock_info.get('country', 'לא זמין'),
+                    "מטבע": stock_info.get('currency', 'USD'),
+                    "אתר": stock_info.get('website', 'לא זמין')
+                }
+                
+                for key, value in info_data.items():
+                    st.markdown(f"**{key}:** {value}")
+                
                 st.markdown("---")
-                st.markdown(stock_info.get("longBusinessSummary", "אין תיאור זמין."))
-            with col2:
-                st.metric("מחיר נוכחי", f"${df_price['Close'].iloc[-1]:.2f}")
-                st.metric("שינוי 1‑יום",
-                          f"{df_price['Close'].pct_change().iloc[-1]*100:+.2f} %")
-                st.metric("שינוי 1‑שנה",
-                          f"{(df_price['Close'].iloc[-1]/df_price['Close'].iloc[0]-1)*100:+.2f} %")
+                st.markdown("### 📖 תיאור החברה")
+                business_summary = stock_info.get('longBusinessSummary', 'אין תיאור זמין.')
+                st.write(business_summary[:500] + "..." if len(business_summary) > 500 else business_summary)
+            
+            with col_info2:
+                st.markdown("### 💰 מדדים פיננסיים")
+                
+                current_price = df_price['Close'].iloc[-1]
+                previous_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
+                daily_change = ((current_price - previous_close) / previous_close) * 100
+                
+                metrics = {
+                    "מחיר נוכחי": f"${current_price:.2f}",
+                    "שינוי יומי": f"{daily_change:+.2f}%",
+                    "מחיר פתיחה": f"${df_price['Open'].iloc[-1]:.2f}",
+                    "גבוה יומי": f"${df_price['High'].iloc[-1]:.2f}",
+                    "נמוך יומי": f"${df_price['Low'].iloc[-1]:.2f}"
+                }
+                
+                for key, value in metrics.items():
+                    st.metric(key, value)
+                
+                st.markdown("---")
+                
+                # מדדים פונדמנטליים נוספים
+                fundamental_metrics = {
+                    "P/E Ratio": stock_info.get('forwardPE', 'N/A'),
+                    "Market Cap": stock_info.get('marketCap', 'N/A'),
+                    "P/B Ratio": stock_info.get('priceToBook', 'N/A'),
+                    "Dividend Yield": stock_info.get('dividendYield', 'N/A'),
+                    "52W High": stock_info.get('fiftyTwoWeekHigh', 'N/A'),
+                    "52W Low": stock_info.get('fiftyTwoWeekLow', 'N/A')
+                }
+                
+                for key, value in fundamental_metrics.items():
+                    if value != 'N/A':
+                        if key == "Market Cap":
+                            value = f"${value/1e9:.2f}B" if value > 1e9 else f"${value/1e6:.2f}M"
+                        st.text(f"{key}: {value}")
+            
+            # פרשנות פונדמנטלית
+            st.markdown("### 🎯 ניתוח פונדמנטלי")
+            fundamental_insights = analyze_fundamentals(stock_info)
+            for insight in fundamental_insights:
+                st.markdown(f"- {insight}")
+        
         else:
-            st.warning("לא הצלחנו לקבל מידע פונדמנטלי, אך הגרף זמין.")
-
+            st.warning("⚠️ לא הצלחנו לקבל מידע פונדמנטלי מלא. הגרף הטכני עדיין זמין.")
+    
     # --------------------------------------------------------------
-    # 6.3️⃣ יומן אישי – ניהול פוזיציות + הורדת CSV
+    # טאב 3: ניהול פורטפוליו
     # --------------------------------------------------------------
-    with tab_journal:
-        st.markdown("### 🛎️ ניהול פוזיציות")
-        col_price, col_shares = st.columns(2)
-
+    with tab3:
+        st.markdown("### 🛒 הוספת פוזיציה חדשה")
+        
+        col_price, col_shares, col_action = st.columns([2, 2, 1])
+        
         with col_price:
+            current_price = df_price['Close'].iloc[-1]
             price_to_save = st.number_input(
                 "מחיר קנייה (USD)",
                 min_value=0.0,
-                value=round(df_price["Close"].iloc[-1], 2)
+                value=round(current_price, 2),
+                step=0.01,
+                key="buy_price"
             )
+        
         with col_shares:
             shares_to_save = st.number_input(
-                "כמות מניות", min_value=1, step=1, value=1
+                "כמות מניות",
+                min_value=1,
+                step=1,
+                value=100,
+                key="shares_amount"
             )
-
-        if st.button(f"הוסף פוזיציה של {ticker_input}"):
-            add_trade(ticker_input, price_to_save, shares_to_save)
-            st.success("✅ פוזיציה נשמרה!")
-
-        if st.session_state.trades:
-            st.markdown("#### 📋 הפוזיציות שלי")
-            for uid, trade in list(st.session_state.trades.items()):
-                c1, c2, c3 = st.columns([4, 2, 1])
-                with c1:
-                    st.info(
-                        f"**{trade['Ticker']}** – מחיר: ${trade['Price']:.2f} – "
-                        f"מניות: {trade['Shares']} – תאריך: {trade['Date']}"
-                    )
-                with c2:
-                    if st.button("✏️ ערוך", key=f"edit_{uid}"):
-                        new_price = st.number_input(
-                            f"מחיר חדש ({trade['Ticker']})",
-                            min_value=0.0,
-                            value=trade["Price"],
-                            key=f"newprice_{uid}"
-                        )
-                        new_shares = st.number_input(
-                            f"כמות חדשה ({trade['Ticker']})",
-                            min_value=1,
-                            step=1,
-                            value=trade["Shares"],
-                            key=f"newshares_{uid}"
-                        )
-                        st.session_state.trades[uid]["Price"] = round(new_price, 2)
-                        st.session_state.trades[uid]["Shares"] = new_shares
-                        st.success("✅ הפוזיציה עודכנה")
-                        st.rerun()
-                with c3:
-                    if st.button("🗑️ מחק", key=f"del_{uid}"):
-                        delete_trade(uid)
-                        st.success("✅ הפוזיציה נמחקה")
-                        st.rerun()
+        
+        with col_action:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(f"➕ הוסף {ticker_input}", use_container_width=True):
+                add_trade(ticker_input, price_to_save, shares_to_save)
+                st.success(f"✅ פוזיציה של {ticker_input} נוספה בהצלחה!")
+                st.rerun()
+        
+        # הצעת מחיר אוטומטית
+        st.info(f"💡 מחיר נוכחי: ${current_price:.2f} | שווי פוזיציה מוצע: ${current_price * shares_to_save:.2f}")
+    
+    # --------------------------------------------------------------
+    # טאב 4: יומן פוזיציות
+    # --------------------------------------------------------------
+    with tab4:
+        st.markdown("### 📋 פוזיציות פעילות")
+        
+        if not st.session_state.trades:
+            st.info("📝 עדיין לא הוספת פוזיציות. עבור לטאב 'ניהול פורטפוליו' כדי להוסיף.")
         else:
-            st.info("עדיין לא הוספת פוזיציות. השתמש בלחצן “הוסף פוזיציה”.")
-        st.markdown("---")
-        # הורדת CSV
-        if st.session_state.trades:
-            csv_buffer = io.StringIO()
-            pd.DataFrame.from_dict(st.session_state.trades, orient="index") \
-                .to_csv(csv_buffer, index=False)
-            st.download_button(
-                label="📥 הורד יומן בפורמט CSV",
-                data=csv_buffer.getvalue().encode(),
-                file_name=f"journal_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv",
+            # יצירת DataFrame מהפוזיציות
+            trades_df = pd.DataFrame.from_dict(st.session_state.trades, orient='index')
+            
+            # חישוב ערכים נוכחיים
+            current_values = []
+            for _, trade in trades_df.iterrows():
+                ticker = trade['Ticker']
+                try:
+                    df_tmp, _, _ = load_stock_data(ticker)
+                    if df_tmp is not None:
+                        current_price = df_tmp['Close'].iloc[-1]
+                        current_value = current_price * trade['Shares']
+                        profit_loss = current_value - (trade['Price'] * trade['Shares'])
+                        profit_loss_pct = (profit_loss / (trade['Price'] * trade['Shares'])) * 100
+                        
+                        current_values.append({
+                            'Current Price': current_price,
+                            'Current Value': current_value,
+                            'P&L ($)': profit_loss,
+                            'P&L (%)': profit_loss_pct
+                        })
+                    else:
+                        current_values.append({
+                            'Current Price': None,
+                            'Current Value': None,
+                            'P&L ($)': None,
+                            'P&L (%)': None
+                        })
+                except:
+                    current_values.append({
+                        'Current Price': None,
+                        'Current Value': None,
+                        'P&L ($)': None,
+                        'P&L (%)': None
+                    })
+            
+            # הוספת עמודות חדשות
+            current_df = pd.DataFrame(current_values)
+            display_df = pd.concat([trades_df, current_df], axis=1)
+            
+            # הסדר עמודות
+            display_df = display_df[['Ticker', 'Price', 'Shares', 'Date', 
+                                    'Current Price', 'Current Value', 'P&L ($)', 'P&L (%)']]
+            
+            # תצוגת טבלה מעוצבת
+            st.dataframe(
+                display_df.style.format({
+                    'Price': '${:,.2f}',
+                    'Current Price': '${:,.2f}',
+                    'Current Value': '${:,.2f}',
+                    'P&L ($)': '${:+,.2f}',
+                    'P&L (%)': '{:+.2f}%'
+                }).apply(
+                    lambda x: ['background-color: #ffcccc' if isinstance(v, (int, float)) and v < 0 
+                              else 'background-color: #ccffcc' if isinstance(v, (int, float)) and v > 0 
+                              else '' for v in x],
+                    subset=['P&L ($)', 'P&L (%)']
+                ),
+                use_container_width=True
             )
+            
+            # כפתורי פעולה
+            col_del1, col_del2, col_del3 = st.columns(3)
+            
+            with col_del1:
+                if st.button("🗑️ מחק פוזיציה אחרונה", use_container_width=True):
+                    if st.session_state.trades:
+                        last_trade_id = list(st.session_state.trades.keys())[-1]
+                        delete_trade(last_trade_id)
+                        st.success("✅ הפוזיציה האחרונה נמחקה!")
+                        st.rerun()
+            
+            with col_del2:
+                if st.button("📥 הורד דו״ח CSV", use_container_width=True):
+                    csv_buffer = io.StringIO()
+                    display_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="לחץ להורדה",
+                        data=csv_buffer.getvalue(),
+                        file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                    )
+            
+            with col_del3:
+                if st.button("📊 הורד דו״ח Excel", use_container_width=True):
+                    excel_buffer = to_excel(display_df)
+                    st.download_button(
+                        label="לחץ להורדה",
+                        data=excel_buffer,
+                        file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+    
+    # --------------------------------------------------------------
+    # טאב 5: סיכום תיק
+    # --------------------------------------------------------------
+    with tab5:
+        if st.session_state.portfolio.shape[0] > 0:
+            st.markdown("### 📊 סיכום תיק השקעות")
+            
+            # חישוב ערכים נוכחיים
+            portfolio_summary = []
+            total_invested = 0
+            total_current = 0
+            
+            for ticker in st.session_state.portfolio["Ticker"].unique():
+                positions = st.session_state.portfolio[st.session_state.portfolio["Ticker"] == ticker]
+                invested = (positions["EntryPrice"] * positions["Shares"]).sum()
+                
+                # קבלת מחיר נוכחי
+                try:
+                    df_tmp, _, _ = load_stock_data(ticker)
+                    if df_tmp is not None:
+                        current_price = df_tmp["Close"].iloc[-1]
+                        current_value = current_price * positions["Shares"].sum()
+                        
+                        portfolio_summary.append({
+                            "Ticker": ticker,
+                            "Shares": positions["Shares"].sum(),
+                            "Avg Entry": positions["EntryPrice"].mean(),
+                            "Current Price": current_price,
+                            "Invested": invested,
+                            "Current Value": current_value,
+                            "P&L": current_value - invested,
+                            "P&L %": ((current_value - invested) / invested) * 100 if invested > 0 else 0
+                        })
+                        
+                        total_invested += invested
+                        total_current += current_value
+                except:
+                    continue
+            
+            if portfolio_summary:
+                summary_df = pd.DataFrame(portfolio_summary)
+                
+                # הצגת טבלה
+                st.dataframe(
+                    summary_df.style.format({
+                        'Avg Entry': '${:,.2f}',
+                        'Current Price': '${:,.2f}',
+                        'Invested': '${:,.2f}',
+                        'Current Value': '${:,.2f}',
+                        'P&L': '${:+,.2f}',
+                        'P&L %': '{:+.2f}%'
+                    }).apply(
+                        lambda x: ['background-color: #ffcccc' if isinstance(v, (int, float)) and v < 0 
+                                  else 'background-color: #ccffcc' if isinstance(v, (int, float)) and v > 0 
+                                  else '' for v in x],
+                        subset=['P&L', 'P&L %']
+                    ),
+                    use_container_width=True
+                )
+                
+                # מדדים סיכומיים
+                total_pl = total_current - total_invested
+                total_pl_pct = (total_pl / total_invested) * 100 if total_invested > 0 else 0
+                
+                col_sum1, col_sum2, col_sum3 = st.columns(3)
+                
+                with col_sum1:
+                    st.metric("💰 הון מושקע", f"${total_invested:,.2f}")
+                
+                with col_sum2:
+                    st.metric("📈 שווי נוכחי", f"${total_current:,.2f}")
+                
+                with col_sum3:
+                    st.metric("🎯 רווח/הפסד", 
+                             f"${total_pl:,.2f}",
+                             f"{total_pl_pct:+.2f}%")
+                
+                # גרף עוגה - חלוקת תיק
+                st.markdown("### 🥧 חלוקת התיק לפי מניות")
+                fig_pie = px.pie(
+                    summary_df,
+                    values="Invested",
+                    names="Ticker",
+                    title="התפלגות השקעות לפי מניות",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+                
+                # גרף ביצועים
+                st.markdown("### 📈 ביצועי תיק מצטברים")
+                
+                # יצירת נתוני ביצועים היפותטיים (בגרסה מתקדמת אפשר לחבר למעקב בזמן אמת)
+                dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
+                portfolio_value = []
+                base_value = total_invested
+                
+                for i in range(30):
+                    # סימולציה של תשואה יומית אקראית
+                    daily_return = np.random.normal(0.0005, 0.02)
+                    portfolio_value.append(base_value * (1 + daily_return * i))
+                
+                perf_df = pd.DataFrame({
+                    'Date': dates,
+                    'Portfolio Value': portfolio_value
+                })
+                
+                fig_perf = px.line(
+                    perf_df,
+                    x='Date',
+                    y='Portfolio Value',
+                    title='שווי תיק לאורך זמן (סימולציה)'
+                )
+                fig_perf.update_layout(template="plotly_white")
+                st.plotly_chart(fig_perf, use_container_width=True)
+                
+        else:
+            st.info("📭 התיק שלך ריק. הוסף פוזיציות כדי לראות סיכום כאן.")
 
 # ----------------------------------------------------------------------
-# 7️⃣ סיכום פורטפוליו (אם יש)
+# 7️⃣ Footer
 # ----------------------------------------------------------------------
-if st.session_state.portfolio.shape[0] > 0:
-    st.markdown("---")
-    st.subheader("💼 סיכום פורטפוליו")
-    # עדכון מחירי סגירה עדכניים לכל טיקר
-    latest_prices = {}
-    for ticker in st.session_state.portfolio["Ticker"].unique():
-        df_tmp, _ = fetch_stock_data(ticker)
-        if df_tmp is not None and not df_tmp.empty:
-            latest_prices[ticker] = df_tmp["Close"].iloc[-1]
-
-    df_port = st.session_state.portfolio.copy()
-    df_port["CurrentPrice"] = df_port["Ticker"].map(latest_prices)
-    df_port["CurrentValue"] = df_port["CurrentPrice"] * df_port["Shares"]
-    df_port["Invested"] = df_port["EntryPrice"] * df_port["Shares"]
-    df_port["P&L ($)"] = df_port["CurrentValue"] - df_port["Invested"]
-    df_port["P&L (%)"] = (df_port["P&L ($)"] / df_port["Invested"]) * 100
-
-    st.dataframe(
-        df_port[
-            [
-                "Ticker",
-                "EntryPrice",
-                "Shares",
-                "Invested",
-                "CurrentPrice",
-                "CurrentValue",
-                "P&L ($)",
-                "P&L (%)",
-            ]
-        ].style.format(
-            {
-                "EntryPrice": "${:,.2f}",
-                "Invested": "${:,.2f}",
-                "CurrentPrice": "${:,.2f}",
-                "CurrentValue": "${:,.2f}",
-                "P&L ($)": "${:+,.2f}",
-                "P&L (%)": "{:+.2f} %",
-            }
-        )
-    )
-
-    total_invested = df_port["Invested"].sum()
-    total_current = df_port["CurrentValue"].sum()
-    total_pl = total_current - total_invested
-    total_pl_pct = (total_pl / total_invested) * 100 if total_invested else 0
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("הון מושקע", f"${total_invested:,.2f}")
-    c2.metric("שווי נוכחי", f"${total_current:,.2f}")
-    c3.metric("רווח/הפסד", f"${total_pl:,.2f} ({total_pl_pct:+.2f} %)")
-
-    fig_port = px.pie(
-        df_port,
-        values="Invested",
-        names="Ticker",
-        title="חלוקת הון לפי מניות",
-        hole=0.4,
-    )
-    st.plotly_chart(fig_port, use_container_width=True)
-
-# ----------------------------------------------------------------------
-# 8️⃣ Footer
-# ----------------------------------------------------------------------
+st.markdown("---")
 st.markdown(
     """
-    <hr>
-    <div style="text-align:center; font-size:0.9rem;">
-        © 2026 – <b>התיק החכם</b> | 
-        <a href="https://github.com/your-repo" target="_blank">קוד מקור ב‑GitHub</a> |
-        <a href="https://pypi.org/project/yfinance/" target="_blank">yFinance</a>
+    <div style="text-align: center; padding: 20px;">
+        <h3>💡 אודות "התיק החכם"</h3>
+        <p>מערכת לניהול תיק השקעות וניתוח מניות בעברית</p>
+        <p style="font-size: 0.9rem; color: #666;">
+            © 2024 התיק החכם | 
+            <a href="https://github.com/" target="_blank">קוד פתוח</a> | 
+            <a href="#" target="_blank">מדריך שימוש</a> |
+            <a href="#" target="_blank">תנאי שימוש</a>
+        </p>
+        <p style="font-size: 0.8rem; color: #999;">
+            ⚠️ הערה: האפליקציה נועדה לסיוע בניתוח בלבד ואינה מהווה ייעוץ השקעות.<br>
+            יש לבצע מחקר עצמאי לפני כל החלטת השקעה.
+        </p>
     </div>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
