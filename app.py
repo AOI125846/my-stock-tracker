@@ -17,28 +17,28 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # הוספת נתיבי התיקיות למערכת
-sys.path.insert(0, './CORE')
-sys.path.insert(0, './UTYLES')
+sys.path.insert(0, './core')
+sys.path.insert(0, './utils')
 
 # ייבוא מודולים מותאמים עם טיפול בשגיאות
 try:
-    from CORE.indicators import calculate_all_indicators, calculate_final_score, get_smart_analysis, analyze_fundamentals
-    from CORE.data import load_stock_data
-    from UTYLES.export import to_excel
+    from core.indicators import calculate_all_indicators, calculate_final_score, get_smart_analysis, analyze_fundamentals
+    from core.data import load_stock_data
+    from utils.export import to_excel
 except ImportError as e:
     st.error(f"❌ שגיאה בייבוא מודולים: {e}")
     st.info("""
     **פתרון:**
     1. ודא שקיימות התיקיות הבאות:
-       - `CORE/` עם הקבצים: `indicators.py`, `data.py`
-       - `UTYLES/` עם הקובץ: `export.py`
+       - `core/` עם הקבצים: `indicators.py`, `data.py`
+       - `utils/` עם הקובץ: `export.py`
     2. אם התיקיות לא קיימות, צור אותן והעבר את הקבצים המתאימים
     """)
     
     # יצירת מבנה תיקיות אוטומטי (אופציונלי)
     if st.button("📁 צור מבנה תיקיות אוטומטית"):
-        os.makedirs("CORE", exist_ok=True)
-        os.makedirs("UTYLES", exist_ok=True)
+        os.makedirs("core", exist_ok=True)
+        os.makedirs("utils", exist_ok=True)
         st.success("✅ תיקיות נוצרו! אנא העלה את הקבצים המתאימים.")
     st.stop()
 
@@ -695,3 +695,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
