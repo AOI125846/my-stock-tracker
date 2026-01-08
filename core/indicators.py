@@ -1,100 +1,100 @@
+"""
+מודול לחישוב אינדיקטורים טכניים
+"""
+
 import pandas as pd
 import numpy as np
 
 # --- חישובים טכניים ---
 def calculate_all_indicators(df, ma_type):
-    # וידוא שאין עמודות כפולות ששוברות את החישוב
-    df = df.loc[:, ~df.columns.duplicated()]
+    """
+    מחשב את כל האינדיקטורים הטכניים עבור DataFrame של מחירי מניות
     
-    periods = [9, 20, 50] if "קצר" in ma_type else [100, 150, 200]
+    פרמטרים:
+    ----------
+    df : pandas.DataFrame
+        DataFrame עם עמודות Open, High, Low, Close, Volume
+    ma_type : str
+        סוג הממוצעים הנעים
+    
+    מחזיר:
+    -------
+    tuple : (DataFrame עם אינדיקטורים, רשימת תקופות SMA)
+    """
+    # יצירת עותק כדי לא לשנות את המקור
+    df_calc = df.copy()
+    
+    # ניקוי עמודות כפולות
+    df_calc = df_calc.loc[:, ~df_calc.columns.duplicated()]
+    
+    # וידוא שיש עמודת Close
+    if 'Close' not in df_calc.columns:
+        raise ValueError("DataFrame חייב לכלול עמודת 'Close'")
+    
+    # בחירת תקופות SMA לפי סוג
+    if "קצר" in ma_type:
+        periods = [9, 20, 50]
+    else:
+        periods = [100, 150, 200]
+    
+    # חישוב Simple Moving Averages
     for p in periods:
-        df[f'SMA_{p}'] = df['Close'].rolling(window=p).mean()
-
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-
-    # MACD
-    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = ema12 - ema26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-
-    # Bollinger
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
-    df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
+        df_calc[f'SMA_{p}'] = df_calc['Close'].rolling(window=p, min_periods=1).mean()
     
-    return df, periods
+    # חישוב RSI (Relative Strength Index)
+    delta = df_calc['Close'].diff()
+    
+    # יצירת סדרות של רווחים והפסדים
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    
+    # חישוב ממוצע נע מעריכי
+    avg_gain = gain.rolling(window=14, min_periods=1).mean()
+    avg_loss = loss.rolling(window=14, min_periods=1).mean()
+    
+    # חישוב RS ו-RSI (עם הגנה מפני חלוקה באפס)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    df_calc['RSI'] = 100 - (100 / (1 + rs))
+    
+    # הגבלת ערכי RSI בין 0-100
+    df_calc['RSI'] = df_calc['RSI'].clip(0, 100)
+    
+    # חישוב MACD (Moving Average Convergence Divergence)
+    ema12 = df_calc['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
+    ema26 = df_calc['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
+    df_calc['MACD'] = ema12 - ema26
+    df_calc['MACD_Signal'] = df_calc['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
+    
+    # חישוב Bollinger Bands
+    df_calc['BB_Mid'] = df_calc['Close'].rolling(window=20, min_periods=1).mean()
+    df_calc['BB_Std'] = df_calc['Close'].rolling(window=20, min_periods=1).std()
+    df_calc['BB_Upper'] = df_calc['BB_Mid'] + (2 * df_calc['BB_Std'])
+    df_calc['BB_Lower'] = df_calc['BB_Mid'] - (2 * df_calc['BB_Std'])
+    
+    return df_calc, periods
+
 
 # --- חישוב ציון טכני ---
 def calculate_final_score(row, periods):
-    score = 50
-    # RSI
-    if row['RSI'] < 30: score += 15
-    elif row['RSI'] > 70: score -= 15
-    # MACD
-    if row['MACD'] > row['MACD_Signal']: score += 15
-    else: score -= 15
-    # Trend
-    long_ma = periods[-1]
-    if row['Close'] > row[f'SMA_{long_ma}']: score += 10
-    else: score -= 10
+    """
+    מחשב ציון טכני כולל עבור שורה בודדת
     
-    score = max(0, min(100, score))
+    פרמטרים:
+    ----------
+    row : pandas.Series
+        שורה עם ערכים של אינדיקטורים
+    periods : list
+        רשימת תקופות SMA
     
-    if score >= 80: return score, "קנייה חזקה 🚀", "green"
-    elif score >= 60: return score, "קנייה ✅", "#90ee90"
-    elif score <= 20: return score, "מכירה חזקה 📉", "red"
-    elif score <= 40: return score, "מכירה 🔻", "orange"
-    else: return score, "נייטרלי ✋", "gray"
-
-# --- פרשנות טכנית ---
-def get_smart_analysis(df, periods):
-    last = df.iloc[-1]
-    analysis = []
+    מחזיר:
+    -------
+    tuple : (ציון מספרי, המלצה, צבע)
+    """
+    score = 50  # ציון התחלתי
     
-    if last['RSI'] > 70: analysis.append(f"🔴 **RSI ({last['RSI']:.1f}):** קניית יתר. המחיר 'מתוח' מדי.")
-    elif last['RSI'] < 30: analysis.append(f"🟢 **RSI ({last['RSI']:.1f}):** מכירת יתר. הזדמנות לכניסה.")
-    
-    if last['MACD'] > last['MACD_Signal']: analysis.append("🚀 **MACD:** מומנטום חיובי ומתחזק.")
-    else: analysis.append("📉 **MACD:** המומנטום נחלש (שלילי).")
-
-    if last['Close'] > last['BB_Upper']: analysis.append("⚠️ **בולינגר:** המחיר חורג מהרצועה העליונה.")
-    
-    return analysis
-
-# --- פרשנות פונדמנטלית ---
-def analyze_fundamentals(info):
-    insights = []
-    if not info:
-        return ["אין נתונים פנדמנטליים זמינים למניה זו."]
-
-    # מכפיל רווח (PE)
-    pe = info.get('forwardPE', None)
-    if pe:
-        if pe < 15: insights.append(f"✅ **מכפיל רווח ({pe:.2f}):** המניה זולה ביחס לרווחיה (Value).")
-        elif pe > 40: insights.append(f"⚠️ **מכפיל רווח ({pe:.2f}):** המניה יקרה מאוד (צמיחה גבוהה).")
-        else: insights.append(f"ℹ️ **מכפיל רווח ({pe:.2f}):** תמחור סביר.")
-    
-    # יעד אנליסטים
-    current_price = info.get('currentPrice', info.get('previousClose', 0))
-    target_price = info.get('targetMeanPrice', 0)
-    
-    if current_price and target_price:
-        # הגנה מפני חלוקה באפס
-        if current_price > 0:
-            upside = ((target_price - current_price) / current_price) * 100
-            if upside > 10: insights.append(f"🎯 **תחזית אנליסטים:** צופים עלייה של {upside:.1f}% למחיר {target_price}$.")
-            elif upside < 0: insights.append(f"🔻 **תחזית אנליסטים:** המחיר כרגע גבוה ממחיר היעד הממוצע ({target_price}$).")
-
-    # רווחיות
-    margins = info.get('profitMargins', 0)
-    if margins > 0.2: insights.append(f"💎 **רווחיות:** החברה רווחית מאוד (שולי רווח של {margins*100:.1f}%).")
-    elif margins < 0: insights.append(f"⚠️ **סיכון:** החברה מפסידה כסף כרגע.")
-
-    return insights
+    # RSI - 30 נקודות
+    if 'RSI' in row and not pd.isna(row['RSI']):
+        if row['RSI'] < 30:
+            score += 15  # מכירת יתר - הזדמנות קנייה
+        elif row['RSI'] > 70:
+            score -= 15  # קניית יתר - הז
