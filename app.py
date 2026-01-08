@@ -876,52 +876,12 @@ def calculate_advanced_indicators(df):
         df_calc['BB_Upper'] = df_calc['BB_Middle'] + (bb_std * 2)
         df_calc['BB_Lower'] = df_calc['BB_Middle'] - (bb_std * 2)
         
-        # Stochastic
-        try:
-            low_14 = df_calc['Low'].rolling(14, min_periods=1).min()
-            high_14 = df_calc['High'].rolling(14, min_periods=1).max()
-            
-            # הגנה מפני חלוקה באפס
-            denominator = (high_14 - low_14).replace(0, np.nan)
-            df_calc['%K'] = 100 * ((df_calc['Close'] - low_14) / denominator)
-            df_calc['%D'] = df_calc['%K'].rolling(3, min_periods=1).mean()
-        except:
-            df_calc['%K'] = 50
-            df_calc['%D'] = 50
-        
-        # Average True Range (ATR)
-        try:
-            high_low = df_calc['High'] - df_calc['Low']
-            high_close = np.abs(df_calc['High'] - df_calc['Close'].shift())
-            low_close = np.abs(df_calc['Low'] - df_calc['Close'].shift())
-            
-            # יצירת DataFrame משולב
-            ranges_df = pd.DataFrame({
-                'high_low': high_low,
-                'high_close': high_close,
-                'low_close': low_close
-            })
-            
-            true_range = ranges_df.max(axis=1)
-            df_calc['ATR'] = true_range.rolling(14, min_periods=1).mean()
-        except:
-            df_calc['ATR'] = df_calc['Close'].rolling(14, min_periods=1).std()
-        
-        # Volume indicators
-        try:
-            df_calc['Volume_SMA'] = df_calc['Volume'].rolling(20, min_periods=1).mean()
-            # הגנה מפני חלוקה באפס
-            df_calc['Volume_Ratio'] = df_calc['Volume'] / df_calc['Volume_SMA'].replace(0, np.nan)
-            df_calc['Volume_Ratio'] = df_calc['Volume_Ratio'].fillna(1)
-        except:
-            df_calc['Volume_SMA'] = 1000
-            df_calc['Volume_Ratio'] = 1
-        
         return df_calc
         
     except Exception as e:
+        # במקרה של שגיאה, החזר את ה-DataFrame המקורי
         st.error(f"❌ שגיאה בחישוב אינדיקטורים: {str(e)}")
-        # החזרת DataFrame המקורי במקרה של שגיאה
+          # החזרת DataFrame המקורי במקרה של שגיאה
         return df_calc        
         # זיהוי תבניות
         patterns = detect_chart_patterns(df_with_indicators)
@@ -1410,4 +1370,5 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 """, height=0)
+
 
