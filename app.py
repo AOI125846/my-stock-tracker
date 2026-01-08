@@ -767,8 +767,25 @@ for idx, stock in enumerate(popular_stocks):
 if ticker_input:
     with st.spinner(f"🤖 טוען נתונים מתקדמים עבור {ticker_input}..."):
         # טעינת נתוני מניה
-        stock_data = yf.download(ticker_input, period="6mo", progress=False)
+try:
+    stock_data = yf.download(ticker_input, period="6mo", progress=False, auto_adjust=True)
+    
+    # המרת MultiIndex לעמודות רגילות
+    if isinstance(stock_data.columns, pd.MultiIndex):
+        stock_data.columns = stock_data.columns.get_level_values(0)
+    
+    # אם עדיין יש בעיה, ננסה להוריד שוב עם הגדרות אחרות
+    if stock_data.empty:
+        stock_data = yf.download(ticker_input, period="3mo", progress=False, auto_adjust=False)
         
+except Exception as e:
+    st.error(f"❌ שגיאה בטעינת נתונים: {str(e)}")
+    # ניסיון נוסף עם פרמטרים שונים
+    try:
+        stock_data = yf.download(ticker_input, period="1mo", progress=False)
+    except:
+        st.error("❌ לא ניתן לטעון נתונים. נסה סימול אחר.")
+        st.stop()        
         if stock_data.empty:
             st.error(f"❌ לא נמצאו נתונים עבור {ticker_input}")
             st.stop()
@@ -782,8 +799,130 @@ if ticker_input:
             company_name = ticker_input
         
         # חישוב אינדיקטורים מתקדמים
-        df_with_indicators = calculate_advanced_indicators(stock_data)
+# ---------- פונקציות אינדיקטורים מתקדמות ----------
+def calculate_advanced_indicators(df):
+    """מחשב אינדיקטורים טכניים מתקדמים"""
+    
+    # יצירת עותק בטוח של DataFrame
+    df_calc = df.copy()
+    
+    # תיקון קריטי: המרת MultiIndex לעמודות רגילות
+    if isinstance(df_calc.columns, pd.MultiIndex):
+        # אם יש MultiIndex, ניקח רק את הרמה הראשונה
+        df_calc.columns = df_calc.columns.get_level_values(0)
+    
+    # וידוא שיש לנו את העמודות הנדרשות
+    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_columns = [col for col in required_columns if col not in df_calc.columns]
+    
+    if missing_columns:
+        st.warning(f"⚠️ חסרות עמודות: {missing_columns}. משתמש בעמודות זמינות.")
+        # ננסה למצוא עמודות חלופיות
+        for col in missing_columns:
+            if col in ['Open', 'High', 'Low', 'Close']:
+                # אם חסרה עמודת מחיר, ננסה להשתמש ב'Adj Close' אם קיים
+                if 'Adj Close' in df_calc.columns and col == 'Close':
+                    df_calc[col] = df_calc['Adj Close']
+                else:
+                    # אם אין נתון, נשתמש בעמודה הקיימת הראשונה
+                    df_calc[col] = df_calc.iloc[:, 0]
+            elif col == 'Volume':
+                # ל-volume ניתן ערך דיפולטיבי
+                df_calc[col] = 1000
+    
+    # ניקוי עמודות כפולות (במקרה שיש)
+    df_calc = df_calc.loc[:, ~df_calc.columns.duplicated()]
+    
+    # וידוא שיש לנו מספיק נתונים
+    if len(df_calc) < 20:
+        st.warning("⚠️ אין מספיק נתונים לחישוב אינדיקטורים מתקדמים")
+        return df_calc
+    
+    try:
+        # ממוצעים נעים בסיסיים
+        df_calc['SMA_20'] = df_calc['Close'].rolling(20, min_periods=1).mean()
+        df_calc['SMA_50'] = df_calc['Close'].rolling(50, min_periods=1).mean()
+        df_calc['SMA_200'] = df_calc['Close'].rolling(200, min_periods=1).mean()
         
+        # EMA
+        df_calc['EMA_12'] = df_calc['Close'].ewm(span=12, min_periods=1).mean()
+        df_calc['EMA_26'] = df_calc['Close'].ewm(span=26, min_periods=1).mean()
+        
+        # MACD
+        df_calc['MACD'] = df_calc['EMA_12'] - df_calc['EMA_26']
+        df_calc['MACD_Signal'] = df_calc['MACD'].ewm(span=9, min_periods=1).mean()
+        df_calc['MACD_Histogram'] = df_calc['MACD'] - df_calc['MACD_Signal']
+        
+        # RSI
+        delta = df_calc['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        
+        avg_gain = gain.rolling(14, min_periods=1).mean()
+        avg_loss = loss.rolling(14, min_periods=1).mean()
+        
+        # הגנה מפני חלוקה באפס
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        df_calc['RSI'] = 100 - (100 / (1 + rs))
+        df_calc['RSI'] = df_calc['RSI'].fillna(50)  # ערך ברירת מחדל
+        
+        # Bollinger Bands - עם הגנות
+        df_calc['BB_Middle'] = df_calc['Close'].rolling(20, min_periods=1).mean()
+        bb_std = df_calc['Close'].rolling(20, min_periods=1).std()
+        
+        # החלפת NaN ב-0 ב- bb_std
+        bb_std = bb_std.fillna(0)
+        
+        df_calc['BB_Upper'] = df_calc['BB_Middle'] + (bb_std * 2)
+        df_calc['BB_Lower'] = df_calc['BB_Middle'] - (bb_std * 2)
+        
+        # Stochastic
+        try:
+            low_14 = df_calc['Low'].rolling(14, min_periods=1).min()
+            high_14 = df_calc['High'].rolling(14, min_periods=1).max()
+            
+            # הגנה מפני חלוקה באפס
+            denominator = (high_14 - low_14).replace(0, np.nan)
+            df_calc['%K'] = 100 * ((df_calc['Close'] - low_14) / denominator)
+            df_calc['%D'] = df_calc['%K'].rolling(3, min_periods=1).mean()
+        except:
+            df_calc['%K'] = 50
+            df_calc['%D'] = 50
+        
+        # Average True Range (ATR)
+        try:
+            high_low = df_calc['High'] - df_calc['Low']
+            high_close = np.abs(df_calc['High'] - df_calc['Close'].shift())
+            low_close = np.abs(df_calc['Low'] - df_calc['Close'].shift())
+            
+            # יצירת DataFrame משולב
+            ranges_df = pd.DataFrame({
+                'high_low': high_low,
+                'high_close': high_close,
+                'low_close': low_close
+            })
+            
+            true_range = ranges_df.max(axis=1)
+            df_calc['ATR'] = true_range.rolling(14, min_periods=1).mean()
+        except:
+            df_calc['ATR'] = df_calc['Close'].rolling(14, min_periods=1).std()
+        
+        # Volume indicators
+        try:
+            df_calc['Volume_SMA'] = df_calc['Volume'].rolling(20, min_periods=1).mean()
+            # הגנה מפני חלוקה באפס
+            df_calc['Volume_Ratio'] = df_calc['Volume'] / df_calc['Volume_SMA'].replace(0, np.nan)
+            df_calc['Volume_Ratio'] = df_calc['Volume_Ratio'].fillna(1)
+        except:
+            df_calc['Volume_SMA'] = 1000
+            df_calc['Volume_Ratio'] = 1
+        
+        return df_calc
+        
+    except Exception as e:
+        st.error(f"❌ שגיאה בחישוב אינדיקטורים: {str(e)}")
+        # החזרת DataFrame המקורי במקרה של שגיאה
+        return df_calc        
         # זיהוי תבניות
         patterns = detect_chart_patterns(df_with_indicators)
         
@@ -1271,3 +1410,4 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 """, height=0)
+
