@@ -1,7 +1,5 @@
-streamlit>=1.18
+streamlit
 yfinance
 pandas
-numpy
-plotly
 openpyxl
-streamlit-tradingview-chart
+plotly
