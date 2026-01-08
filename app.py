@@ -445,7 +445,8 @@ with st.sidebar:
     
     # ניקוי נתונים
     if st.button("🧹 נקה כל הנתונים", type="secondary"):
-        st.session_state.clear()
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
         st.success("✅ כל הנתונים נוקו!")
         st.rerun()
 
@@ -704,7 +705,10 @@ if ticker_input:
                 st.markdown("---")
                 st.markdown("### 📖 תיאור החברה")
                 business_summary = stock_info.get('longBusinessSummary', 'אין תיאור זמין.')
-                st.write(business_summary[:500] + "..." if len(business_summary) > 500 else business_summary)
+                if len(business_summary) > 500:
+                    st.write(business_summary[:500] + "...")
+                else:
+                    st.write(business_summary)
             
             with col_info2:
                 st.markdown("### 💰 מדדים פיננסיים")
@@ -734,4 +738,16 @@ if ticker_input:
     with tab3:
         st.markdown("### 🛒 הוספת פוזיציה חדשה")
         
-        col_price, col_shares, col_action
+        col_price, col_shares, col_action = st.columns([2, 2, 1])
+        
+        with col_price:
+            current_price = df_price['Close'].iloc[-1]
+            price_to_save = st.number_input(
+                "מחיר קנייה (USD)",
+                min_value=0.0,
+                value=round(current_price, 2),
+                step=0.01,
+                key="buy_price"
+            )
+        
+        with
