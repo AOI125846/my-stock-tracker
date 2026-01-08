@@ -7,10 +7,10 @@ import requests
 import streamlit.components.v1 as components
 import uuid
 
-# הגדרות דף
+# --- הגדרות דף ---
 st.set_page_config(page_title="התיק החכם", layout="wide")
 
-# עיצוב מתקדם עם תמונת רקע
+# עיצוב CSS לרקע ויישור לימין
 st.markdown("""
     <style>
     [data-testid="stAppViewContainer"] {
@@ -25,87 +25,85 @@ st.markdown("""
         margin-top: 2rem;
         direction: rtl;
     }
-    h1, h2, h3 { text-align: center; color: #1E1E1E; }
-    .stTextInput { width: 50% !important; margin: 0 auto; }
+    div.stButton > button { width: 100%; }
+    .stTextInput input { text-align: center; }
     </style>
 """, unsafe_allow_html=True)
 
-# פונקציית טעינה עם מנגנון "ניסיון חוזר"
-def fetch_stock_data(symbol):
+# פונקציית טעינת נתונים חסינה
+def get_stock_data(symbol):
     try:
-        s = requests.Session()
-        s.headers.update({'User-Agent': 'Mozilla/5.0'})
-        ticker = yf.Ticker(symbol, session=s)
-        # ניסיון משיכה ראשון
-        df = ticker.history(period="1y")
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        stock = yf.Ticker(symbol, session=session)
+        df = stock.history(period="1y")
         if df.empty:
-            # ניסיון משיכה שני בשיטה חלופית
             df = yf.download(symbol, period="1y", progress=False)
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        return df, ticker.info if not df.empty else None
+        return df, stock.info
     except:
         return None, None
 
-if 'trades' not in st.session_state:
-    st.session_state.trades = {}
+# ניהול מצב (Session)
+if 'my_trades' not in st.session_state:
+    st.session_state.my_trades = {}
 
+# --- ממשק משתמש ---
 st.title("📈 התיק החכם")
 
-# שורת חיפוש ממרכזת
-col1, col2, col3 = st.columns([1, 2, 1])
+col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
-    ticker_input = st.text_input("הזן סימול מניה (למשל AAPL, TSLA):", "AAPL").upper()
+    ticker = st.text_input("הזן סימול מניה (למשל TSLA):", "AAPL").upper()
 
-if ticker_input:
-    with st.spinner('מתחבר לבורסה...'):
-        df, info = fetch_stock_data(ticker_input)
-
+if ticker:
+    df, info = get_stock_data(ticker)
+    
     if df is not None and not df.empty:
-        st.success(f"נתוני {ticker_input} נטענו בהצלחה")
+        st.subheader(f"ניתוח מניית {ticker}")
         
-        t1, t2, t3 = st.tabs(["📊 גרף טכני", "🏢 נתוני חברה", "📓 יומן עסקאות"])
+        tab_chart, tab_info, tab_journal = st.tabs(["📊 גרף טכני", "🏢 אודות", "📓 יומן אישי"])
         
-        with t1:
-            # הטמעת הגרף של TradingView
-            html_chart = f"""
+        with tab_chart:
+            # הטמעת TradingView ללא ספריות חיצוניות
+            tv_html = f"""
             <div style="height:500px;">
                 <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
                 <script type="text/javascript">
                 new TradingView.widget({{
-                  "width": "100%", "height": 500, "symbol": "{ticker_input}",
+                  "width": "100%", "height": 500, "symbol": "{ticker}",
                   "interval": "D", "timezone": "Etc/UTC", "theme": "light",
-                  "style": "1", "locale": "he_IL", "enable_publishing": false,
-                  "hide_top_toolbar": false, "save_image": false, "container_id": "tv_chart"
+                  "style": "1", "locale": "he_IL", "container_id": "tv_chart_id"
                 }});
                 </script>
-                <div id="tv_chart"></div>
+                <div id="tv_chart_id"></div>
             </div>
             """
-            components.html(html_chart, height=520)
+            components.html(tv_html, height=520)
 
-        with t2:
+        with tab_info:
             if info:
-                st.subheader(f"מידע על {info.get('longName', ticker_input)}")
+                st.write(f"**שם החברה:** {info.get('longName', ticker)}")
+                st.write(f"**ענף:** {info.get('industry', 'לא ידוע')}")
                 st.write(info.get('longBusinessSummary', 'אין תיאור זמין.'))
             else:
-                st.info("מידע פונדמנטלי לא זמין כרגע, אך הגרף תקין.")
+                st.warning("לא הצלחנו למשוך מידע פונדמנטלי, אך הגרף זמין.")
 
-        with t3:
-            # מערכת היומן עם כפתור מחיקה וייצוא
-            st.subheader("ניהול תיק אישי")
-            if st.button("➕ הוסף פוזיציה נוכחית"):
-                id = str(uuid.uuid4())
-                st.session_state.trades[id] = {"מניה": ticker_input, "מחיר": df['Close'].iloc[-1]}
-                st.rerun()
-
-            for tid, t in list(st.session_state.trades.items()):
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"עסקה ב-{t['מניה']} במחיר ${t['מחיר']:.2f}")
-                if c2.button("🗑️", key=tid):
-                    del st.session_state.trades[tid]
-                    st.rerun()
+        with tab_journal:
+            st.markdown("### ניהול פוזיציות")
+            if st.button(f"הוסף את {ticker} ליומן"):
+                trade_id = str(uuid.uuid4())[:8]
+                st.session_state.my_trades[trade_id] = {
+                    "מניה": ticker,
+                    "מחיר": df['Close'].iloc[-1],
+                    "תאריך": str(pd.Timestamp.now().date())
+                }
+                st.success("נשמר!")
+            
+            if st.session_state.my_trades:
+                for tid, t in list(st.session_state.my_trades.items()):
+                    c1, c2 = st.columns([4, 1])
+                    c1.info(f"📌 {t['מניה']} | מחיר: ${t['מחיר']:.2f} | תאריך: {t['תאריך']}")
+                    if c2.button("מחק", key=tid):
+                        del st.session_state.my_trades[tid]
+                        st.rerun()
     else:
-        st.error(f"לא הצלחנו למשוך נתונים עבור {ticker_input}. ייתכן שיש עומס על השרת, נסה שוב בעוד רגע.")
+        st.error(f"לא נמצאו נתונים עבור {ticker}. וודא שהסימול נכון.")
