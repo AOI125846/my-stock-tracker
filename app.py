@@ -570,12 +570,21 @@ if ticker_input:
     # שם החברה
     company_name = full_name if full_name != ticker_input else ticker_input
     
-    # תצוגת כותרת עם לוגו
-    col_logo, col_name = st.columns([1, 4])
-    with col_logo:
-        st.image(logo_url, width=80, caption=ticker_input)
-    with col_name:
-        st.markdown(f"<h2 style='margin-top: 20px;'>{company_name}</h2>", unsafe_allow_html=True)
+    # תצוגת כותרת עם לוגו (בטוח)
+col_logo, col_name = st.columns([1, 4])
+
+with col_logo:
+    if logo_url:
+        st.image(logo_url, width=80)
+    else:
+        st.markdown("📈")
+
+with col_name:
+    st.markdown(
+        f"<h2 style='margin-top: 20px;'>{company_name} ({ticker_input})</h2>",
+        unsafe_allow_html=True
+    )
+
     
     # טאבים ראשיים
     tab_names = ["📊 גרף נרות", "📈 ניתוח טכני", "🏢 נתונים פונדמנטליים", "💼 ניהול פוזיציות", "🌐 מצב השוק"]
@@ -1173,3 +1182,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
